@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 
-const AdminImporter = () => {
+export default function AdminImporter() {
   const [cjProductId, setCjProductId] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
@@ -13,13 +13,12 @@ const AdminImporter = () => {
     setMessage(null);
 
     try {
-      // In a real app, this points to our Vercel API endpoint
       // Simply change the fetch URL to point to Netlify's functions endpoint
-const res = await fetch('/.netlify/functions/import-product', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ cjProductId, customCategory: 'Tech' }),
-});
+      const res = await fetch('/.netlify/functions/import-product', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cjProductId, customCategory: 'Tech' }),
+      });
       
       const data = await res.json();
       
@@ -30,12 +29,9 @@ const res = await fetch('/.netlify/functions/import-product', {
         setMessage({ type: 'error', text: 'Failed to import. Check Product ID.' });
       }
     } catch (err) {
-      // Temporary mock success for UI testing before backend is live
-      setTimeout(() => {
-        setMessage({ type: 'success', text: `Mock Import Success for ID: ${cjProductId}` });
-        setLoading(false);
-        setCjProductId('');
-      }, 1500);
+      setMessage({ type: 'error', text: 'Unable to import product. Please try again.' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -86,6 +82,4 @@ const res = await fetch('/.netlify/functions/import-product', {
       )}
     </div>
   );
-};
-
-export default AdminImporter;
+}

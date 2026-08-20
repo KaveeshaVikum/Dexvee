@@ -11,6 +11,7 @@ import {
 import AccountPage from './AccountPage';
 import AboutUs from './AboutUs';
 import AuthPage from './AuthPage';
+import AdminImporter from "./pages/AdminImporter";
 
 // --- DATA ---
 
@@ -546,6 +547,7 @@ export default function App() {
           <Route path="/about" element={<AboutUs />} />
           <Route path="/auth" element={<AuthPage />} />
           <Route path="/account" element={<AccountPage darkMode={darkMode} setDarkMode={setDarkMode} />} />
+          <Route path="/admin" element={<AdminImporter />} />
         </Routes>
 
         {/* Quick View Modal */}
