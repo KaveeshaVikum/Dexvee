@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { 
   Sparkles, Zap, ShieldCheck, Truck, 
@@ -7,8 +7,54 @@ import {
   User, Package, Clock, Flame, Tag, Gift, Award
 } from 'lucide-react';
 
-// Import the AccountPage component
+// Page Components
 import AccountPage from './AccountPage';
+import AboutUs from './AboutUs';
+import AuthPage from './AuthPage';
+
+// --- DATA ---
+
+const BANNER_DATA = [
+  {
+    id: 1,
+    tag: "Tech Week",
+    tagClass: "border-cyan-500/50 bg-cyan-500/10 text-cyan-400",
+    titleTop: "Level Up Your",
+    highlight: "Workspace",
+    highlightClass: "from-cyan-400 to-fuchsia-500",
+    desc: "Up to 55% off on premium peripherals and accessories.",
+    btnText: "Shop Now",
+    btnClass: "bg-fuchsia-600 hover:bg-fuchsia-500 shadow-[0_0_20px_rgba(192,38,211,0.4)]",
+    bgImg: "https://images.unsplash.com/photo-1593640408182-31c70c8268f5?w=1200&auto=format&fit=crop&q=80",
+    bgAccents: ["bg-cyan-500/10", "bg-fuchsia-500/10"]
+  },
+  {
+    id: 2,
+    tag: "Audio Deals",
+    tagClass: "border-purple-500/50 bg-purple-500/10 text-purple-400",
+    titleTop: "Immersive Sound",
+    highlight: "Experience",
+    highlightClass: "from-purple-400 to-pink-500",
+    desc: "Discover our new range of ANC wireless headphones.",
+    btnText: "Explore Now",
+    btnClass: "bg-purple-600 hover:bg-purple-500 shadow-[0_0_20px_rgba(147,51,234,0.4)]",
+    bgImg: "https://images.unsplash.com/photo-1618366712010-f4ae9c647dcb?w=1200&auto=format&fit=crop&q=80",
+    bgAccents: ["bg-purple-500/10", "bg-pink-500/10"]
+  },
+  {
+    id: 3,
+    tag: "Flash Sale",
+    tagClass: "border-emerald-500/50 bg-emerald-500/10 text-emerald-400",
+    titleTop: "Next-Gen",
+    highlight: "Smartwatches",
+    highlightClass: "from-emerald-400 to-cyan-500",
+    desc: "Track your fitness with precision. Limited time offer.",
+    btnText: "Grab Deal",
+    btnClass: "bg-emerald-600 hover:bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.4)]",
+    bgImg: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=1200&auto=format&fit=crop&q=80",
+    bgAccents: ["bg-emerald-500/10", "bg-cyan-500/10"]
+  }
+];
 
 const INITIAL_PRODUCTS = [
   {
@@ -124,11 +170,13 @@ const MOCK_VOUCHERS = [
 ];
 
 export default function App() {
+  // Navigation & Filtering States
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("featured");
 
   // App States
+  const [currentBanner, setCurrentBanner] = useState(0);
   const [products] = useState(INITIAL_PRODUCTS);
   const [vouchers, setVouchers] = useState(MOCK_VOUCHERS);
   const [quickViewProduct, setQuickViewProduct] = useState(null);
@@ -141,11 +189,21 @@ export default function App() {
   // Theme State passed down to AccountPage
   const [darkMode, setDarkMode] = useState(false);
 
+  // User Profile
   const [userProfile] = useState({
     name: "Kaveesha",
     email: "vikumkaveesha8@gmail.com",
     address: "Ipalogama, Anuradhapura"
   });
+
+  // Auto-slide effect for banner
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentBanner((prev) => (prev + 1) % BANNER_DATA.length);
+    }, 5000); // Changes every 5 seconds
+
+    return () => clearInterval(timer);
+  }, []);
 
   const showToast = (text) => {
     setToastMsg(text);
@@ -238,10 +296,13 @@ export default function App() {
         <header className="bg-[#2D1B4E] sticky top-0 z-40 shadow-md">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-6">
             
-            {/* Brand Logo */}
-            <Link to="/src/logo.png" className="flex items-center gap-3 shrink-0 text-white">
-              <div className="w-10 h-10 bg-white text-[#2D1B4E] rounded-2xl flex items-center justify-center font-black text-xl shadow-inner">D</div>
-              <span className="text-2xl font-bold tracking-wide">Dexvee</span>
+            {/* Brand Logo (Full Image without box) */}
+            <Link to="/" className="flex items-center shrink-0">
+               <img 
+                 src="/logo.png" 
+                 alt="Dexvee" 
+                 className="h-10 md:h-11 object-contain drop-shadow-lg" 
+               />
             </Link>
 
             {/* Search Box - Rounded Pill */}
@@ -262,9 +323,9 @@ export default function App() {
 
             {/* Header Actions */}
             <div className="flex items-center gap-6 shrink-0 text-white">
-              <Link to="/account" className="flex items-center gap-2 hover:text-gray-300 transition-colors cursor-pointer bg-white/5 px-4 py-2 rounded-2xl">
+              <Link to="/auth" className="flex items-center gap-2 hover:text-gray-300 transition-colors cursor-pointer bg-white/5 px-4 py-2 rounded-2xl">
                 <User className="w-5 h-5" />
-                <span className="text-sm font-medium hidden md:block">Account</span>
+                <span className="text-sm font-medium hidden md:block">Sign In</span>
               </Link>
 
               <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 hover:text-gray-300 transition-colors bg-white/5 px-4 py-2 rounded-2xl">
@@ -282,32 +343,100 @@ export default function App() {
 
         {/* Application Routing */}
         <Routes>
-          {/* Main Storefront Route */}
           <Route path="/" element={
             <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-24 space-y-10">
               
-              {/* Minimal Hero / Voucher Banner */}
-              <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-8 flex flex-col md:flex-row items-center justify-between gap-6">
-                <div>
-                  <h1 className="text-3xl font-bold text-gray-800 mb-2">Shop the <span className="text-[#2D1B4E]">Mega Choice</span> Festival</h1>
-                  <p className="text-gray-500">Claim your vouchers below to save more.</p>
-                </div>
-                <div className="flex flex-wrap gap-4">
-                  {vouchers.map(v => (
-                    <div key={v.id} className="border-2 border-[#2D1B4E]/10 bg-[#2D1B4E]/5 rounded-2xl p-4 flex items-center gap-5">
-                      <div>
-                        <div className="text-base font-black text-[#2D1B4E]">{v.title}</div>
-                        <div className="text-[11px] text-gray-600 font-medium mt-0.5">Min spend ${v.minSpend}</div>
+              {/* Daraz-Style Split Hero Banner with Auto-Slider */}
+              <div className="flex flex-col lg:flex-row gap-4">
+                
+                {/* Main Large Auto-Sliding Banner (75%) */}
+                <div className="w-full lg:w-3/4 relative bg-[#0D0717] rounded-3xl overflow-hidden shadow-sm border border-[#2D1B4E] min-h-[320px]">
+                  
+                  {BANNER_DATA.map((banner, index) => (
+                    <div
+                      key={banner.id}
+                      className={`absolute inset-0 w-full h-full flex items-center transition-opacity duration-1000 ease-in-out ${
+                        index === currentBanner ? "opacity-100 z-10" : "opacity-0 z-0"
+                      }`}
+                    >
+                      {/* Image Background with Dark Gradient Overlay */}
+                      <div 
+                        className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-30"
+                        style={{ backgroundImage: `url(${banner.bgImg})` }}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-r from-[#0D0717] via-[#0D0717]/80 to-transparent" />
+                      
+                      {/* Glowing Ambient Background Elements */}
+                      <div className={`absolute top-0 right-0 w-96 h-96 ${banner.bgAccents[0]} rounded-full blur-3xl -translate-y-1/2 translate-x-1/3`}></div>
+                      <div className={`absolute bottom-0 left-10 w-72 h-72 ${banner.bgAccents[1]} rounded-full blur-3xl translate-y-1/2`}></div>
+                      
+                      {/* Banner Content */}
+                      <div className="relative z-20 p-10 md:p-14 w-full md:w-2/3">
+                        <div className={`inline-block px-3 py-1 mb-4 border ${banner.tagClass} text-xs font-black tracking-widest uppercase rounded-full`}>
+                          {banner.tag}
+                        </div>
+                        <h1 className="text-4xl md:text-5xl font-black text-white leading-tight mb-4">
+                          {banner.titleTop} <br />
+                          <span className={`text-transparent bg-clip-text bg-gradient-to-r ${banner.highlightClass}`}>
+                            {banner.highlight}
+                          </span>
+                        </h1>
+                        <p className="text-gray-300 mb-8 font-medium">
+                          {banner.desc}
+                        </p>
+                        <button className={`${banner.btnClass} text-white px-8 py-3.5 rounded-2xl font-black uppercase tracking-wider transition-all`}>
+                          {banner.btnText}
+                        </button>
                       </div>
-                      <button 
-                        onClick={() => collectVoucher(v.id)}
-                        disabled={v.collected}
-                        className={`text-xs font-bold px-5 py-2.5 rounded-xl transition-all ${v.collected ? 'bg-gray-200 text-gray-500' : 'bg-[#2D1B4E] text-white hover:bg-[#1A0F2E] shadow-md'}`}
-                      >
-                        {v.collected ? "Collected" : "Collect"}
-                      </button>
                     </div>
                   ))}
+
+                  {/* Slider Dot Indicators */}
+                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-black/20 px-3 py-1.5 rounded-full backdrop-blur-sm">
+                    {BANNER_DATA.map((_, index) => (
+                      <button
+                        key={index}
+                        onClick={() => setCurrentBanner(index)}
+                        className={`transition-all duration-300 rounded-full ${
+                          index === currentBanner ? "w-6 h-2 bg-white" : "w-2 h-2 bg-white/40 hover:bg-white/80"
+                        }`}
+                        aria-label={`Go to slide ${index + 1}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Side Promo/Voucher Banner (25%) */}
+                <div className="w-full lg:w-1/4 bg-[#1A0F2E] rounded-3xl p-6 shadow-sm border border-[#2D1B4E] flex flex-col justify-center relative overflow-hidden">
+                  <div className="relative z-10 text-center">
+                    <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/10">
+                      <Gift className="w-6 h-6 text-fuchsia-400" />
+                    </div>
+                    <h3 className="text-white font-black text-lg mb-1">Claim Vouchers</h3>
+                    <p className="text-gray-400 text-xs font-medium mb-6">Exclusive savings inside</p>
+                    
+                    <div className="space-y-3">
+                      {vouchers.map(v => (
+                        <div key={v.id} className="bg-[#0D0717] border border-[#2D1B4E] rounded-2xl p-4 flex items-center justify-between">
+                          <div className="text-left">
+                            <div className="text-cyan-400 font-black text-lg leading-none">{v.title}</div>
+                            <div className="text-gray-500 text-[10px] mt-1 uppercase tracking-wider">Min ${v.minSpend}</div>
+                          </div>
+                          <button 
+                            onClick={() => collectVoucher(v.id)}
+                            disabled={v.collected}
+                            className={`text-xs font-bold px-4 py-2 rounded-xl transition-all ${
+                              v.collected 
+                                ? 'bg-gray-800 text-gray-500 cursor-not-allowed' 
+                                : 'bg-white text-[#0D0717] hover:bg-cyan-400 hover:shadow-[0_0_15px_rgba(34,211,238,0.4)]'
+                            }`}
+                          >
+                            {v.collected ? "Got It" : "Claim"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -413,7 +542,9 @@ export default function App() {
             </main>
           } />
 
-          {/* Account Dashboard Route */}
+          {/* New Connected Routes */}
+          <Route path="/about" element={<AboutUs />} />
+          <Route path="/auth" element={<AuthPage />} />
           <Route path="/account" element={<AccountPage darkMode={darkMode} setDarkMode={setDarkMode} />} />
         </Routes>
 
@@ -557,7 +688,12 @@ export default function App() {
 
         {/* Minimalist Footer */}
         <footer className="bg-white border-t border-gray-200 mt-16 py-10 text-center">
-          <p className="text-sm font-medium text-gray-500">© 2026 Dexvee Express. All rights reserved.</p>
+          <div className="flex justify-center gap-6 mb-4 text-xs font-semibold text-gray-500">
+            <Link to="/about" className="hover:text-[#2D1B4E]">About Us</Link>
+            <span>•</span>
+            <Link to="/account" className="hover:text-[#2D1B4E]">Track Order</Link>
+          </div>
+          <p className="text-sm font-medium text-gray-400">© 2026 Dexvee Express. All rights reserved.</p>
         </footer>
 
       </div>
