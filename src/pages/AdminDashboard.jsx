@@ -30,7 +30,6 @@ export default function AdminDashboard() {
     return saved ? JSON.parse(saved) : DEFAULT_PRODUCTS;
   });
 
-  // Global Markup Percentage Setting (Default: 40% profit markup)
   const [markupPercent, setMarkupPercent] = useState(40);
 
   useEffect(() => {
@@ -42,7 +41,6 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState({ type: '', text: '' });
 
-  // Form State for Manual Item with Supplier Cost
   const [manualItem, setManualItem] = useState({
     name: "",
     category: "Gadgets",
@@ -67,12 +65,11 @@ export default function AdminDashboard() {
     }
   };
 
-  // Utility to calculate selling price & profit split
   const calculatePricing = (baseCost) => {
     const cost = parseFloat(baseCost) || 10;
     const sellingPrice = cost * (1 + markupPercent / 100);
     const profit = sellingPrice - cost;
-    const partnerSplit = profit / 2; // Split 50/50 between you and your partner
+    const partnerSplit = profit / 2; 
 
     return {
       costPrice: cost,
@@ -82,7 +79,6 @@ export default function AdminDashboard() {
     };
   };
 
-  // 1. Real URL Import connected to Netlify Function & Firebase Database
   const handleUrlImport = async (e) => {
     e.preventDefault();
     if (!externalUrl) return;
@@ -91,8 +87,8 @@ export default function AdminDashboard() {
     setStatusMsg({ type: '', text: '' });
 
     try {
-      // Calls your serverless function on Netlify[cite: 3]
-      const res = await fetch('/.netlify/functions/import-product', {
+      // FIXED: Endpoint changed to match plural 'import-products'
+      const res = await fetch('/.netlify/functions/import-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -104,21 +100,21 @@ export default function AdminDashboard() {
       const data = await res.json();
       
       if (data.success) {
-        const pricing = calculatePricing(data.product.supplierCost || 15.00);
+        const pricing = calculatePricing(data.product?.supplierCost || 15.00);
         const newLiveItem = {
-          id: data.product.id || Date.now(),
-          name: data.product.name,
-          category: data.product.category,
+          id: data.product?.id || Date.now(),
+          name: data.product?.name || "Imported Product",
+          category: data.product?.category || "Gadgets",
           ...pricing,
-          rating: data.product.rating || 5.0,
+          rating: data.product?.rating || 5.0,
           supplier: "CJ Dropshipping Sync",
           tag: "Live Firebase",
-          image: data.product.image
+          image: data.product?.image || "https://images.unsplash.com/photo-1546868871-7041f2a55e12?w=600&auto=format&fit=crop&q=80"
         };
 
         setProducts([newLiveItem, ...products]);
         setExternalUrl("");
-        showStatus('success', `Successfully synced "${data.product.name}" to Firebase!`);
+        showStatus('success', `Successfully synced "${newLiveItem.name}" to Firebase!`);
       } else {
         showStatus('error', 'Failed to import product from backend.');
       }
@@ -129,7 +125,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // 2. Manual Add with Live Profit Preview
   const handleManualAdd = (e) => {
     e.preventDefault();
     if (!manualItem.name || !manualItem.costPrice) return;
@@ -157,7 +152,6 @@ export default function AdminDashboard() {
     showStatus('success', 'Product removed.');
   };
 
-  // Calculate Overall Store Potential Profit
   const totalStoreProfit = products.reduce((sum, p) => sum + (p.profit || 0), 0);
   const myShare = totalStoreProfit / 2;
 
@@ -198,8 +192,6 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-[#070A0F] text-white font-sans">
-      
-      {/* Header */}
       <header className="border-b border-white/10 bg-[#0B0F19]/90 backdrop-blur-xl px-8 py-4 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#635BFF] to-[#00F2FE] p-[2px] flex items-center justify-center">
@@ -223,8 +215,6 @@ export default function AdminDashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
-        
-        {/* Top Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-[#0B0F19] border border-white/10 rounded-2xl p-5 flex items-center gap-4">
             <div className="p-3 bg-[#635BFF]/10 text-[#635BFF] rounded-xl"><TrendingUp className="w-6 h-6" /></div>
@@ -268,8 +258,6 @@ export default function AdminDashboard() {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* Upload Form */}
           <div className="bg-[#0B0F19] border border-white/10 rounded-3xl p-6 h-fit">
             <h2 className="text-lg font-black uppercase mb-1 flex items-center gap-2">
               <PackagePlus className="w-5 h-5 text-[#00F2FE]" /> Import & Set Markup
@@ -328,7 +316,6 @@ export default function AdminDashboard() {
             )}
           </div>
 
-          {/* Catalog & Profit Breakdown */}
           <div className="lg:col-span-2 bg-[#0B0F19] border border-white/10 rounded-3xl p-6">
             <h2 className="text-lg font-black uppercase mb-4 flex items-center gap-2">
               <LayoutDashboard className="w-5 h-5 text-[#635BFF]" /> Live Products & Split Breakdown
@@ -367,7 +354,6 @@ export default function AdminDashboard() {
             </div>
 
           </div>
-
         </div>
       </main>
     </div>

@@ -13,17 +13,18 @@ export default function AdminImporter() {
     setMessage(null);
 
     try {
-      // Simply change the fetch URL to point to Netlify's functions endpoint
-      const res = await fetch('/.netlify/functions/import-product', {
+      // Endpoint is confirmed plural
+      const response = await fetch('/.netlify/functions/import-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cjProductId, customCategory: 'Tech' }),
+        body: JSON.stringify({ cjProductId })
       });
       
-      const data = await res.json();
+      // FIXED: Properly resolves the 'response' variable correctly mapped above
+      const data = await response.json();
       
       if (data.success) {
-        setMessage({ type: 'success', text: `Successfully imported: ${data.product.name}` });
+        setMessage({ type: 'success', text: `Successfully imported: ${data.product?.name || 'Product'}` });
         setCjProductId(''); // Clear input
       } else {
         setMessage({ type: 'error', text: 'Failed to import. Check Product ID.' });
