@@ -39,7 +39,6 @@ export default function AdminDashboard() {
 
   const [activeTab, setActiveTab] = useState("url");
   const [externalUrl, setExternalUrl] = useState("");
-  const [jsonInput, setJsonInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState({ type: '', text: '' });
 
@@ -73,7 +72,7 @@ export default function AdminDashboard() {
     const cost = parseFloat(baseCost) || 10;
     const sellingPrice = cost * (1 + markupPercent / 100);
     const profit = sellingPrice - cost;
-    const partnerSplit = profit / 2; // Split 50/50 between you and your friend
+    const partnerSplit = profit / 2; // Split 50/50 between you and your partner
 
     return {
       costPrice: cost,
@@ -83,44 +82,51 @@ export default function AdminDashboard() {
     };
   };
 
-  // 1. URL Import with Auto Markup
-  const handleUrlImport = (e) => {
+  // 1. Real URL Import connected to Netlify Function & Firebase Database
+  const handleUrlImport = async (e) => {
     e.preventDefault();
     if (!externalUrl) return;
 
     setLoading(true);
+    setStatusMsg({ type: '', text: '' });
 
-    setTimeout(() => {
-      let detectedName = "Imported Item";
-      try {
-        const urlObj = new URL(externalUrl);
-        const pathSegments = urlObj.pathname.split('/').filter(Boolean);
-        if (pathSegments.length > 0) {
-          detectedName = pathSegments[pathSegments.length - 1]
-            .replace(/[-_]/g, ' ')
-            .replace(/\b\w/g, l => l.toUpperCase());
-        }
-      } catch (err) {}
+    try {
+      // Calls your serverless function on Netlify[cite: 3]
+      const res = await fetch('/.netlify/functions/import-product', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          cjProductId: externalUrl, 
+          customCategory: 'Gadgets' 
+        }),
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        const pricing = calculatePricing(data.product.supplierCost || 15.00);
+        const newLiveItem = {
+          id: data.product.id || Date.now(),
+          name: data.product.name,
+          category: data.product.category,
+          ...pricing,
+          rating: data.product.rating || 5.0,
+          supplier: "CJ Dropshipping Sync",
+          tag: "Live Firebase",
+          image: data.product.image
+        };
 
-      const simulatedSupplierCost = 15.00; // Low-cost supplier price
-      const pricing = calculatePricing(simulatedSupplierCost);
-
-      const importedProduct = {
-        id: Date.now(),
-        name: detectedName,
-        category: "Gadgets",
-        ...pricing,
-        rating: 5.0,
-        supplier: "External Site Sync",
-        tag: "Synced",
-        image: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&auto=format&fit=crop&q=80"
-      };
-
-      setProducts([importedProduct, ...products]);
-      setExternalUrl("");
+        setProducts([newLiveItem, ...products]);
+        setExternalUrl("");
+        showStatus('success', `Successfully synced "${data.product.name}" to Firebase!`);
+      } else {
+        showStatus('error', 'Failed to import product from backend.');
+      }
+    } catch (err) {
+      showStatus('error', 'Network error connecting to Netlify function.');
+    } finally {
       setLoading(false);
-      showStatus('success', `Imported "${importedProduct.name}"! Retail price auto-marked up to $${pricing.price}`);
-    }, 800);
+    }
   };
 
   // 2. Manual Add with Live Profit Preview
@@ -282,16 +288,16 @@ export default function AdminDashboard() {
             {activeTab === "url" && (
               <form onSubmit={handleUrlImport} className="space-y-4">
                 <div>
-                  <label className="text-xs font-bold uppercase text-gray-400 block mb-1">Supplier Product URL</label>
+                  <label className="text-xs font-bold uppercase text-gray-400 block mb-1">Supplier Product ID / URL</label>
                   <input 
-                    required type="url" value={externalUrl} onChange={(e) => setExternalUrl(e.target.value)}
-                    placeholder="https://supplier-site.com/item"
+                    required type="text" value={externalUrl} onChange={(e) => setExternalUrl(e.target.value)}
+                    placeholder="e.g. CJ-998877 or URL"
                     className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-xs outline-none focus:border-[#00F2FE]"
                   />
                 </div>
                 <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-[#635BFF] to-[#00F2FE] text-black font-black py-3.5 rounded-full uppercase text-xs flex items-center justify-center gap-2">
                   {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                  {loading ? "Calculating Markup..." : "Import with Profit Margin"}
+                  {loading ? "Syncing to Firebase..." : "Import with Profit Margin"}
                 </button>
               </form>
             )}
@@ -311,7 +317,7 @@ export default function AdminDashboard() {
                   <div className="p-3 bg-white/5 rounded-xl border border-white/10 text-xs space-y-1">
                     <div className="flex justify-between text-gray-400"><span>Retail Price (+{markupPercent}%):</span> <span className="text-white font-bold">${calculatePricing(manualItem.costPrice).price}</span></div>
                     <div className="flex justify-between text-emerald-400"><span>Net Profit:</span> <span className="font-bold">${calculatePricing(manualItem.costPrice).profit}</span></div>
-                    <div className="flex justify-between text-[#00F2FE]"><span>Your Share / Friend Share:</span> <span className="font-bold">${calculatePricing(manualItem.costPrice).partnerSplit} each</span></div>
+                    <div className="flex justify-between text-[#00F2FE]"><span>Your Share / Partner Share:</span> <span className="font-bold">${calculatePricing(manualItem.costPrice).partnerSplit} each</span></div>
                   </div>
                 )}
 

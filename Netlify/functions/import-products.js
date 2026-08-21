@@ -1,6 +1,6 @@
 const admin = require('firebase-admin');
 
-// Initialize Firebase Admin with direct credentials (FOR LOCAL TESTING ONLY)
+// Initialize Firebase Admin with credentials directly embedded
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
