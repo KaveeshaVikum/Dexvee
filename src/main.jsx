@@ -1,7 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
-import AdminDashboard from './AdminDashboard.jsx' // Make sure src/AdminDashboard.jsx exists
+import AdminDashboard from "./pages/AdminDashboard.jsx";
 import './index.css' // Loads Tailwind CSS
 
 // Checks if the user is on localhost:5173/admin
