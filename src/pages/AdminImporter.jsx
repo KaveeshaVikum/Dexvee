@@ -20,17 +20,23 @@ export default function AdminImporter() {
         body: JSON.stringify({ cjProductId })
       });
       
-      // FIXED: Properly resolves the 'response' variable correctly mapped above
+      // SAFETY CHECK: Ensure the response is actually JSON before parsing
+      const contentType = response.headers.get("content-type");
+      if (!response.ok || !contentType || !contentType.includes("application/json")) {
+        throw new Error("Backend function missing or returned an HTML error page.");
+      }
+      
       const data = await response.json();
       
       if (data.success) {
         setMessage({ type: 'success', text: `Successfully imported: ${data.product?.name || 'Product'}` });
         setCjProductId(''); // Clear input
       } else {
-        setMessage({ type: 'error', text: 'Failed to import. Check Product ID.' });
+        setMessage({ type: 'error', text: data.error || 'Failed to import. Check Product ID.' });
       }
     } catch (err) {
-      setMessage({ type: 'error', text: 'Unable to import product. Please try again.' });
+      console.error("Dexvee Import Error:", err);
+      setMessage({ type: 'error', text: err.message || 'Unable to import product. Please try again.' });
     } finally {
       setLoading(false);
     }
