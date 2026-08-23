@@ -1,9 +1,10 @@
-import admin from 'firebase-admin';
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 // Initialize Firebase Admin securely using environment variables
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
+if (!getApps().length) {
+  initializeApp({
+    credential: cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       // This line ensures private key newlines are read properly by Node.js
@@ -12,10 +13,10 @@ if (!admin.apps.length) {
   });
 }
 
-const db = admin.firestore();
+const db = getFirestore();
 
 export const handler = async (event, context) => {
-  // Your function logic goes here...
+  // Security check to ensure it's a POST request
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
@@ -27,7 +28,7 @@ export const handler = async (event, context) => {
     const productRef = db.collection('products').doc();
     await productRef.set({
       name: data.cjProductId || "Imported Product",
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
+      createdAt: FieldValue.serverTimestamp()
     });
 
     return {
