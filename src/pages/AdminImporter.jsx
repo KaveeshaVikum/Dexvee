@@ -7,8 +7,9 @@ export default function AdminImporter() {
 
   const handleImport = async (e) => {
     e.preventDefault();
-    if (!cjProductId) return;
-    
+    const trimmedId = cjProductId.trim();
+    if (!trimmedId) return;
+
     setLoading(true);
     setMessage(null);
 
@@ -17,17 +18,17 @@ export default function AdminImporter() {
       const response = await fetch('/.netlify/functions/import-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cjProductId })
+        body: JSON.stringify({ cjProductId: trimmedId })
       });
-      
+
       // SAFETY CHECK: Ensure the response is actually JSON before parsing
       const contentType = response.headers.get("content-type");
       if (!response.ok || !contentType || !contentType.includes("application/json")) {
         throw new Error("Backend function missing or returned an HTML error page.");
       }
-      
+
       const data = await response.json();
-      
+
       if (data.success) {
         setMessage({ type: 'success', text: `Successfully imported: ${data.product?.name || 'Product'}` });
         setCjProductId(''); // Clear input
@@ -57,22 +58,22 @@ export default function AdminImporter() {
           <label className="text-xs font-semibold text-purple-300 tracking-wider mb-1 block">
             CJ PRODUCT ID OR URL
           </label>
-          <input 
-            type="text" 
+          <input
+            type="text"
             value={cjProductId}
             onChange={(e) => setCjProductId(e.target.value)}
-            placeholder="e.g. 1234567890" 
+            placeholder="e.g. 1234567890"
             className="w-full bg-[#0D0518] text-white border border-purple-800/60 rounded-lg p-3 focus:outline-none focus:border-[#00E5FF] focus:ring-1 focus:ring-[#00E5FF] transition-all placeholder-gray-600"
             required
           />
         </div>
 
-        <button 
-          type="submit" 
+        <button
+          type="submit"
           disabled={loading}
           className={`mt-2 w-full font-bold py-3 px-4 rounded-lg transition-all duration-300 ${
-            loading 
-              ? 'bg-purple-800 text-purple-300 cursor-not-allowed' 
+            loading
+              ? 'bg-purple-800 text-purple-300 cursor-not-allowed'
               : 'bg-gradient-to-r from-purple-600 to-[#00E5FF] text-white hover:shadow-[0_0_15px_rgba(0,229,255,0.4)] hover:scale-[1.02]'
           }`}
         >
