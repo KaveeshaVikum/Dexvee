@@ -47,7 +47,7 @@ export default function NavBar({
           <Link to="/" className="flex items-center gap-3 shrink-0">
             {/* REAL LOGO IMAGE TAG - Update the src path below */}
             <img 
-              src="logo.png" 
+              src="/logo.png" 
               alt="Dexvee Logo" 
               className="w-10 h-10 object-contain drop-shadow-lg" 
             />

@@ -4,37 +4,68 @@ import {
   Trash2, Plus, LogOut, LayoutDashboard, FileJson, AlertCircle, 
   RefreshCw, Eye, DollarSign, Users, TrendingUp 
 } from 'lucide-react';
-
-const DEFAULT_PRODUCTS = [
-  {
-    id: 1,
-    name: "AeroPulse Wireless Earbuds",
-    category: "Gadgets",
-    costPrice: 20.00,
-    price: 49.99,
-    profit: 29.99,
-    partnerSplit: 14.99,
-    supplier: "External Supplier",
-    tag: "Fast Shipping",
-    image: "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=600&auto=format&fit=crop&q=80"
-  }
-];
+import { db } from '../firebase';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { getUsdToLkrRate, formatLKR } from '../utils/currency';
 
 export default function AdminDashboard() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
 
-  const [products, setProducts] = useState(() => {
-    const saved = localStorage.getItem('dexvee_products');
-    return saved ? JSON.parse(saved) : DEFAULT_PRODUCTS;
-  });
+  const [products, setProducts] = useState([]);
+  const [productsLoading, setProductsLoading] = useState(true);
 
   const [markupPercent, setMarkupPercent] = useState(40);
 
+  // Live USD→LKR exchange rate — supplier costs come in from CJ in USD, but
+  // this dashboard displays everything to you in LKR. Refreshes once a day.
+  const [lkrRate, setLkrRate] = useState(300);
+
   useEffect(() => {
-    localStorage.setItem('dexvee_products', JSON.stringify(products));
-  }, [products]);
+    let isMounted = true;
+    const syncRate = () => {
+      getUsdToLkrRate().then((rate) => { if (isMounted) setLkrRate(rate); });
+    };
+    syncRate();
+    const interval = setInterval(syncRate, 60 * 60 * 1000);
+    return () => { isMounted = false; clearInterval(interval); };
+  }, []);
+
+  // Single source of truth: live-subscribe to Firestore so this table always
+  // matches exactly what the storefront is reading. No more localStorage —
+  // that's what let the admin view and the storefront drift apart before.
+  useEffect(() => {
+    const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const liveProducts = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            name: data.name || 'Unnamed Product',
+            category: data.category || 'Gadgets',
+            costPrice: data.costPrice ?? 0,
+            price: data.sellingPrice ?? 0,
+            profit: data.totalProfit ?? 0,
+            partnerSplit: data.partnerSplit ?? 0,
+            supplier: data.supplier || 'External Supplier',
+            tag: data.tag || 'Imported',
+            image: data.image || (Array.isArray(data.images) ? data.images[0] : '') || ''
+          };
+        });
+        setProducts(liveProducts);
+        setProductsLoading(false);
+      },
+      (err) => {
+        console.error('Failed to subscribe to products:', err);
+        setProductsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   const [activeTab, setActiveTab] = useState("url");
   const [externalUrl, setExternalUrl] = useState("");
@@ -100,23 +131,12 @@ export default function AdminDashboard() {
       const data = await res.json();
       
       if (data.success) {
-        const pricing = calculatePricing(data.product?.supplierCost || 15.00);
-        const newLiveItem = {
-          id: data.product?.id || Date.now(),
-          name: data.product?.name || "Imported Product",
-          category: data.product?.category || "Gadgets",
-          ...pricing,
-          rating: data.product?.rating || 5.0,
-          supplier: "CJ Dropshipping Sync",
-          tag: "Live Firebase",
-          image: data.product?.image || "https://images.unsplash.com/photo-1546868871-7041f2a55e12?w=600&auto=format&fit=crop&q=80"
-        };
-
-        setProducts([newLiveItem, ...products]);
+        // The Netlify function already wrote this to Firestore — the onSnapshot
+        // listener above will pick it up on its own, so we just reset the form.
         setExternalUrl("");
-        showStatus('success', `Successfully synced "${newLiveItem.name}" to Firebase!`);
+        showStatus('success', `Successfully synced "${data.product?.name || 'product'}" to Firebase!`);
       } else {
-        showStatus('error', 'Failed to import product from backend.');
+        showStatus('error', data.error || 'Failed to import product from backend.');
       }
     } catch (err) {
       showStatus('error', 'Network error connecting to Netlify function.');
@@ -125,31 +145,52 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleManualAdd = (e) => {
+  const handleManualAdd = async (e) => {
     e.preventDefault();
     if (!manualItem.name || !manualItem.costPrice) return;
 
-    const pricing = calculatePricing(manualItem.costPrice);
+    setLoading(true);
+    try {
+      const res = await fetch('/.netlify/functions/manage-products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add', ...manualItem, markupPercent })
+      });
+      const data = await res.json();
 
-    const newItem = {
-      id: Date.now(),
-      name: manualItem.name,
-      category: manualItem.category,
-      ...pricing,
-      rating: 5.0,
-      supplier: manualItem.supplier || "External Supplier",
-      tag: manualItem.tag || "New Arrival",
-      image: manualItem.image || "https://images.unsplash.com/photo-1546868871-7041f2a55e12?w=600&auto=format&fit=crop&q=80"
-    };
-
-    setProducts([newItem, ...products]);
-    setManualItem({ name: "", category: "Gadgets", costPrice: "", supplier: "Dropship Partner", image: "", tag: "Imported" });
-    showStatus('success', `Product live! Retail: $${pricing.price} (Your Profit: $${pricing.partnerSplit} | Partner: $${pricing.partnerSplit})`);
+      if (data.success) {
+        // onSnapshot picks this up automatically once Firestore confirms the write.
+        setManualItem({ name: "", category: "Gadgets", costPrice: "", supplier: "Dropship Partner", image: "", tag: "Imported" });
+        const pricing = calculatePricing(manualItem.costPrice);
+        showStatus('success', `Product live! Retail: ${formatLKR(pricing.price, lkrRate)} (Your Profit: ${formatLKR(pricing.partnerSplit, lkrRate)} | Partner: ${formatLKR(pricing.partnerSplit, lkrRate)})`);
+      } else {
+        showStatus('error', data.error || 'Failed to add product.');
+      }
+    } catch (err) {
+      showStatus('error', 'Network error connecting to Netlify function.');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleDelete = (id) => {
-    setProducts(products.filter(p => p.id !== id));
-    showStatus('success', 'Product removed.');
+  const handleDelete = async (id) => {
+    try {
+      const res = await fetch('/.netlify/functions/manage-products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', id })
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        // onSnapshot picks up the removal automatically.
+        showStatus('success', 'Product removed.');
+      } else {
+        showStatus('error', data.error || 'Failed to remove product.');
+      }
+    } catch (err) {
+      showStatus('error', 'Network error connecting to Netlify function.');
+    }
   };
 
   const totalStoreProfit = products.reduce((sum, p) => sum + (p.profit || 0), 0);
@@ -236,7 +277,7 @@ export default function AdminDashboard() {
             <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-xl"><DollarSign className="w-6 h-6" /></div>
             <div>
               <p className="text-xs text-gray-400 font-bold uppercase">Catalog Total Profit</p>
-              <p className="text-xl font-black text-emerald-400">${totalStoreProfit.toFixed(2)}</p>
+              <p className="text-xl font-black text-emerald-400">{formatLKR(totalStoreProfit, lkrRate)}</p>
             </div>
           </div>
 
@@ -244,7 +285,7 @@ export default function AdminDashboard() {
             <div className="p-3 bg-[#00F2FE]/10 text-[#00F2FE] rounded-xl"><Users className="w-6 h-6" /></div>
             <div>
               <p className="text-xs text-gray-400 font-bold uppercase">50/50 Partner Payout</p>
-              <p className="text-xl font-black text-[#00F2FE]">${myShare.toFixed(2)} <span className="text-xs text-gray-400 font-normal">each</span></p>
+              <p className="text-xl font-black text-[#00F2FE]">{formatLKR(myShare, lkrRate)} <span className="text-xs text-gray-400 font-normal">each</span></p>
             </div>
           </div>
         </div>
@@ -297,15 +338,16 @@ export default function AdminDashboard() {
                   <input required type="text" value={manualItem.name} onChange={(e) => setManualItem({ ...manualItem, name: e.target.value })} placeholder="Smart Wireless Watch" className="w-full px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-xs outline-none" />
                 </div>
                 <div>
-                  <label className="text-xs font-bold uppercase text-gray-400 block mb-1">Low Cost Supplier Price ($)</label>
+                  <label className="text-xs font-bold uppercase text-gray-400 block mb-1">Low Cost Supplier Price (USD $)</label>
                   <input required type="number" step="0.01" value={manualItem.costPrice} onChange={(e) => setManualItem({ ...manualItem, costPrice: e.target.value })} placeholder="12.00" className="w-full px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-xs outline-none" />
+                  <p className="text-[10px] text-gray-500 mt-1">Entered in USD (what the supplier bills you) — shown to you and customers in LKR below.</p>
                 </div>
                 
                 {manualItem.costPrice && (
                   <div className="p-3 bg-white/5 rounded-xl border border-white/10 text-xs space-y-1">
-                    <div className="flex justify-between text-gray-400"><span>Retail Price (+{markupPercent}%):</span> <span className="text-white font-bold">${calculatePricing(manualItem.costPrice).price}</span></div>
-                    <div className="flex justify-between text-emerald-400"><span>Net Profit:</span> <span className="font-bold">${calculatePricing(manualItem.costPrice).profit}</span></div>
-                    <div className="flex justify-between text-[#00F2FE]"><span>Your Share / Partner Share:</span> <span className="font-bold">${calculatePricing(manualItem.costPrice).partnerSplit} each</span></div>
+                    <div className="flex justify-between text-gray-400"><span>Retail Price (+{markupPercent}%):</span> <span className="text-white font-bold">{formatLKR(calculatePricing(manualItem.costPrice).price, lkrRate)}</span></div>
+                    <div className="flex justify-between text-emerald-400"><span>Net Profit:</span> <span className="font-bold">{formatLKR(calculatePricing(manualItem.costPrice).profit, lkrRate)}</span></div>
+                    <div className="flex justify-between text-[#00F2FE]"><span>Your Share / Partner Share:</span> <span className="font-bold">{formatLKR(calculatePricing(manualItem.costPrice).partnerSplit, lkrRate)} each</span></div>
                   </div>
                 )}
 
@@ -340,10 +382,10 @@ export default function AdminDashboard() {
                         <img src={p.image} alt={p.name} className="w-7 h-7 rounded object-cover" />
                         <span className="truncate max-w-[140px]">{p.name}</span>
                       </td>
-                      <td className="py-3 text-gray-400">${(p.costPrice || 0).toFixed(2)}</td>
-                      <td className="py-3 font-bold text-white">${(p.price || 0).toFixed(2)}</td>
-                      <td className="py-3 font-bold text-emerald-400">${(p.profit || 0).toFixed(2)}</td>
-                      <td className="py-3 font-bold text-[#00F2FE]">${(p.partnerSplit || 0).toFixed(2)}</td>
+                      <td className="py-3 text-gray-400">{formatLKR(p.costPrice, lkrRate)}</td>
+                      <td className="py-3 font-bold text-white">{formatLKR(p.price, lkrRate)}</td>
+                      <td className="py-3 font-bold text-emerald-400">{formatLKR(p.profit, lkrRate)}</td>
+                      <td className="py-3 font-bold text-[#00F2FE]">{formatLKR(p.partnerSplit, lkrRate)}</td>
                       <td className="py-3 text-right">
                         <button onClick={() => handleDelete(p.id)} className="text-gray-400 hover:text-red-400"><Trash2 className="w-4 h-4" /></button>
                       </td>

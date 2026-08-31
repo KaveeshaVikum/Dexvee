@@ -12,6 +12,13 @@ import AccountPage from './AccountPage';
 import AboutUs from './AboutUs';
 import AuthPage from './AuthPage';
 import AdminImporter from "./pages/AdminImporter";
+import ProductPage from './ProductPage';
+
+// Firestore — this assumes firebase.js exports `db` (the standard convention).
+// If your firebase.js exports it under a different name, adjust this import to match.
+import { db } from './firebase';
+import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { getUsdToLkrRate, formatLKR } from './utils/currency';
 
 // --- DATA ---
 
@@ -166,8 +173,8 @@ const CATEGORY_BUBBLES = [
 ];
 
 const MOCK_VOUCHERS = [
-  { id: "V1", title: "$5 OFF", code: "DEXVEE5", minSpend: 30, discount: 5, collected: false },
-  { id: "V2", title: "15% OFF", code: "FLASH15", minSpend: 60, discount: 15, collected: false }
+  { id: "V1", type: "fixed", code: "DEXVEE5", minSpend: 30, discount: 5, collected: false },
+  { id: "V2", type: "percent", code: "FLASH15", minSpend: 60, discount: 15, collected: false }
 ];
 
 export default function App() {
@@ -178,9 +185,9 @@ export default function App() {
 
   // App States
   const [currentBanner, setCurrentBanner] = useState(0);
-  const [products] = useState(INITIAL_PRODUCTS);
+  const [products, setProducts] = useState(INITIAL_PRODUCTS);
+  const [productsLoading, setProductsLoading] = useState(true);
   const [vouchers, setVouchers] = useState(MOCK_VOUCHERS);
-  const [quickViewProduct, setQuickViewProduct] = useState(null);
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
@@ -189,6 +196,10 @@ export default function App() {
   
   // Theme State passed down to AccountPage
   const [darkMode, setDarkMode] = useState(false);
+
+  // Live USD→LKR exchange rate — all prices are stored in USD, this is only
+  // used to render them as "Rs." for customers. Refreshes once a day.
+  const [lkrRate, setLkrRate] = useState(300);
 
   // User Profile
   const [userProfile] = useState({
@@ -204,6 +215,69 @@ export default function App() {
     }, 5000); // Changes every 5 seconds
 
     return () => clearInterval(timer);
+  }, []);
+
+  // Fetch real imported products from Firestore and merge them into the storefront.
+  // Without this, anything imported through the admin panel never reaches customers —
+  // this component previously only ever showed the hardcoded INITIAL_PRODUCTS array.
+  useEffect(() => {
+    const fetchImportedProducts = async () => {
+      // TEMPORARY DIAGNOSTIC LOGS — remove once we confirm what's happening
+      console.log('[Dexvee Debug] Firebase project ID (client):', db.app.options.projectId);
+
+      try {
+        const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(q);
+        console.log('[Dexvee Debug] Documents returned from Firestore:', snapshot.docs.length);
+
+        const importedProducts = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            name: data.name || 'Unnamed Product',
+            category: data.category || 'New Arrivals',
+            price: data.sellingPrice ?? 0,
+            originalPrice: data.originalPrice ?? null,
+            rating: data.rating ?? 5.0,
+            reviewsCount: data.reviewsCount ?? 0,
+            soldCount: data.soldCount ?? 'New',
+            stockPercent: data.stockPercent ?? 100,
+            supplier: data.supplier || 'CJ Dropshipping',
+            badge: data.badge || 'Sample Checked',
+            isFlashSale: data.isFlashSale ?? false,
+            description: data.description || 'Imported and ready to ship.',
+            image: data.image || (Array.isArray(data.images) ? data.images[0] : '') || '',
+            images: Array.isArray(data.images) && data.images.length > 0
+              ? data.images
+              : (data.image ? [data.image] : [])
+          };
+        });
+
+        // Real imported products appear first, demo catalog fills in after —
+        // nothing you already had disappears, but real inventory takes priority.
+        setProducts([...importedProducts, ...INITIAL_PRODUCTS]);
+      } catch (err) {
+        console.error('Failed to load products from Firestore:', err);
+        // Fall back to the demo catalog so the storefront never shows a blank page
+      } finally {
+        setProductsLoading(false);
+      }
+    };
+
+    fetchImportedProducts();
+  }, []);
+
+  // Sync the USD→LKR rate on load, then re-check hourly so a tab left open
+  // overnight still picks up the next day's rate (getUsdToLkrRate itself only
+  // actually calls the API once every 24 hours — this just triggers the check).
+  useEffect(() => {
+    let isMounted = true;
+    const syncRate = () => {
+      getUsdToLkrRate().then((rate) => { if (isMounted) setLkrRate(rate); });
+    };
+    syncRate();
+    const interval = setInterval(syncRate, 60 * 60 * 1000);
+    return () => { isMounted = false; clearInterval(interval); };
   }, []);
 
   const showToast = (text) => {
@@ -246,6 +320,14 @@ export default function App() {
     showToast("Removed from cart");
   };
 
+  // Used by the "Buy Now" button on the product page — skips the cart drawer
+  // and goes straight to checkout, same as Daraz's Buy Now flow.
+  const handleBuyNow = (product, quantity = 1) => {
+    addToCart(product, quantity);
+    setIsCartOpen(false);
+    setIsCheckoutOpen(true);
+  };
+
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const shippingCost = subtotal > 0 ? (subtotal > 50 ? 0 : 3.99) : 0;
@@ -284,7 +366,7 @@ export default function App() {
             <div className="flex items-center gap-4">
               <span>Welcome to Dexvee</span>
               <span className="hidden md:inline">|</span>
-              <span className="hidden md:inline text-[#2D1B4E] font-medium">Free Shipping on Orders over $50</span>
+              <span className="hidden md:inline text-[#2D1B4E] font-medium">Free Shipping on Orders over {formatLKR(50, lkrRate)}</span>
             </div>
             <div className="flex items-center gap-4">
               <Link to="/admin" className="hover:text-[#2D1B4E] transition-colors">Sell on Dexvee</Link>
@@ -420,8 +502,10 @@ export default function App() {
                       {vouchers.map(v => (
                         <div key={v.id} className="bg-[#0D0717] border border-[#2D1B4E] rounded-2xl p-4 flex items-center justify-between">
                           <div className="text-left">
-                            <div className="text-cyan-400 font-black text-lg leading-none">{v.title}</div>
-                            <div className="text-gray-500 text-[10px] mt-1 uppercase tracking-wider">Min ${v.minSpend}</div>
+                            <div className="text-cyan-400 font-black text-lg leading-none">
+                              {v.type === "percent" ? `${v.discount}% OFF` : `${formatLKR(v.discount, lkrRate)} OFF`}
+                            </div>
+                            <div className="text-gray-500 text-[10px] mt-1 uppercase tracking-wider">Min {formatLKR(v.minSpend, lkrRate)}</div>
                           </div>
                           <button 
                             onClick={() => collectVoucher(v.id)}
@@ -472,7 +556,7 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                   {flashSaleProducts.map((product) => (
-                    <div key={product.id} className="group cursor-pointer bg-gray-50 rounded-3xl p-3 hover:shadow-md transition-all border border-transparent hover:border-gray-200" onClick={() => setQuickViewProduct(product)}>
+                    <Link key={product.id} to={`/product/${product.id}`} className="group cursor-pointer bg-gray-50 rounded-3xl p-3 hover:shadow-md transition-all border border-transparent hover:border-gray-200 block">
                       <div className="aspect-square bg-white mb-4 overflow-hidden rounded-2xl relative">
                         <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                         <div className="absolute top-3 right-3 bg-[#2D1B4E] text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow-lg">
@@ -480,10 +564,10 @@ export default function App() {
                         </div>
                       </div>
                       <div className="px-2 pb-2">
-                        <div className="text-[#2D1B4E] text-xl font-black">${product.price.toFixed(2)}</div>
-                        <div className="text-gray-400 text-sm line-through font-medium">${product.originalPrice.toFixed(2)}</div>
+                        <div className="text-[#2D1B4E] text-xl font-black">{formatLKR(product.price, lkrRate)}</div>
+                        <div className="text-gray-400 text-sm line-through font-medium">{formatLKR(product.originalPrice, lkrRate)}</div>
                       </div>
-                    </div>
+                    </Link>
                   ))}
                 </div>
               </section>
@@ -509,7 +593,7 @@ export default function App() {
                       key={product.id}
                       className="bg-white rounded-3xl border border-gray-100 hover:border-[#2D1B4E]/30 hover:shadow-xl transition-all duration-300 flex flex-col justify-between overflow-hidden"
                     >
-                      <div className="cursor-pointer" onClick={() => setQuickViewProduct(product)}>
+                      <Link to={`/product/${product.id}`} className="cursor-pointer block">
                         <div className="aspect-square bg-gray-50 overflow-hidden relative">
                           <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
                         </div>
@@ -518,7 +602,7 @@ export default function App() {
                             {product.name}
                           </h3>
                           <div className="text-[#2D1B4E] text-xl font-black mb-2">
-                            ${product.price.toFixed(2)}
+                            {formatLKR(product.price, lkrRate)}
                           </div>
                           <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium mb-2">
                             <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
@@ -527,7 +611,7 @@ export default function App() {
                             <span>{product.soldCount} Sold</span>
                           </div>
                         </div>
-                      </div>
+                      </Link>
                       <div className="px-5 pb-5">
                         <button
                           onClick={() => addToCart(product)}
@@ -544,38 +628,19 @@ export default function App() {
           } />
 
           {/* New Connected Routes */}
+          <Route path="/product/:id" element={
+            <ProductPage
+              products={products}
+              lkrRate={lkrRate}
+              onAddToCart={addToCart}
+              onBuyNow={handleBuyNow}
+            />
+          } />
           <Route path="/about" element={<AboutUs />} />
           <Route path="/auth" element={<AuthPage />} />
           <Route path="/account" element={<AccountPage darkMode={darkMode} setDarkMode={setDarkMode} />} />
           <Route path="/admin" element={<AdminImporter />} />
         </Routes>
-
-        {/* Quick View Modal */}
-        {quickViewProduct && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setQuickViewProduct(null)} />
-            <div className="relative w-full max-w-4xl bg-white rounded-3xl p-8 z-10 shadow-2xl flex flex-col md:flex-row gap-8">
-              <button onClick={() => setQuickViewProduct(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200 hover:text-gray-800 transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-              <div className="w-full md:w-1/2 aspect-square rounded-2xl overflow-hidden bg-gray-50">
-                <img src={quickViewProduct.image} alt="" className="w-full h-full object-cover" />
-              </div>
-              <div className="flex flex-col justify-center w-full md:w-1/2 pr-4">
-                <div className="text-xs font-bold text-[#2D1B4E] uppercase tracking-widest mb-2">{quickViewProduct.category}</div>
-                <h3 className="text-2xl font-black text-gray-800 mb-4">{quickViewProduct.name}</h3>
-                <p className="text-gray-500 mb-8 leading-relaxed">{quickViewProduct.description}</p>
-                <div className="text-4xl text-[#2D1B4E] font-black mb-8">${quickViewProduct.price.toFixed(2)}</div>
-                <button 
-                  onClick={() => { addToCart(quickViewProduct); setQuickViewProduct(null); }}
-                  className="w-full py-4 bg-[#2D1B4E] hover:bg-[#1A0F2E] text-white text-sm font-black rounded-2xl uppercase tracking-widest transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
-                >
-                  Add To Cart
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Simple Sidebar Cart */}
         {isCartOpen && (
@@ -599,7 +664,7 @@ export default function App() {
                       <img src={item.image} alt="" className="w-20 h-20 object-cover border border-gray-100 rounded-2xl" />
                       <div className="flex-1 flex flex-col justify-center">
                         <h4 className="text-sm font-semibold text-gray-800 line-clamp-2">{item.name}</h4>
-                        <p className="text-[#2D1B4E] font-black text-base mt-1">${item.price.toFixed(2)}</p>
+                        <p className="text-[#2D1B4E] font-black text-base mt-1">{formatLKR(item.price, lkrRate)}</p>
                         <div className="flex items-center gap-4 mt-3">
                           <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden">
                             <button onClick={() => updateQuantity(item.id, -1)} className="px-3 py-1 text-gray-600 hover:bg-gray-100 transition-colors">-</button>
@@ -618,13 +683,13 @@ export default function App() {
                 <div className="p-6 border-t border-gray-100 bg-gray-50">
                   <div className="space-y-3 mb-6">
                     <div className="flex justify-between text-sm text-gray-500 font-medium">
-                      <span>Subtotal</span><span className="text-gray-800">${subtotal.toFixed(2)}</span>
+                      <span>Subtotal</span><span className="text-gray-800">{formatLKR(subtotal, lkrRate)}</span>
                     </div>
                     <div className="flex justify-between text-sm text-gray-500 font-medium">
-                      <span>Shipping</span><span className="text-gray-800">{shippingCost === 0 ? "Free" : `$${shippingCost.toFixed(2)}`}</span>
+                      <span>Shipping</span><span className="text-gray-800">{shippingCost === 0 ? "Free" : formatLKR(shippingCost, lkrRate)}</span>
                     </div>
                     <div className="flex justify-between font-black text-gray-900 text-2xl pt-3 border-t border-gray-200">
-                      <span>Total</span><span className="text-[#2D1B4E]">${grandTotal.toFixed(2)}</span>
+                      <span>Total</span><span className="text-[#2D1B4E]">{formatLKR(grandTotal, lkrRate)}</span>
                     </div>
                   </div>
                   <button 
@@ -678,7 +743,7 @@ export default function App() {
                     </div>
                     <div className="pt-4">
                       <button type="submit" className="w-full py-4 bg-[#2D1B4E] text-white font-black text-sm rounded-2xl hover:bg-[#1A0F2E] shadow-lg transition-all uppercase tracking-widest">
-                        Pay ${grandTotal.toFixed(2)}
+                        Pay {formatLKR(grandTotal, lkrRate)}
                       </button>
                     </div>
                   </div>
