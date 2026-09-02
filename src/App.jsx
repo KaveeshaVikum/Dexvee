@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { 
-  Sparkles, Zap, ShieldCheck, Truck, 
-  ShoppingCart, Star, Check, Plus, Minus, Trash2, X, Search, 
-  ShoppingBag, CreditCard, Eye, Lock, CheckCircle2, SlidersHorizontal,
-  User, Package, Clock, Flame, Tag, Gift, Award
+  Sparkles, Zap, Truck, 
+  ShoppingCart, Star, Plus, Minus, Trash2, X, Search, 
+  ShoppingBag, CreditCard, CheckCircle2,
+  User, Package, Clock, Flame, Tag, Gift, Award, MapPin, Banknote, Edit3, ChevronRight
 } from 'lucide-react';
 
 // Page Components
@@ -14,8 +14,7 @@ import AuthPage from './AuthPage';
 import AdminImporter from "./pages/AdminImporter";
 import ProductPage from './ProductPage';
 
-// Firestore — this assumes firebase.js exports `db` (the standard convention).
-// If your firebase.js exports it under a different name, adjust this import to match.
+// Firestore
 import { db } from './firebase';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { getUsdToLkrRate, formatLKR } from './utils/currency';
@@ -181,6 +180,7 @@ export default function App() {
   // Navigation & Filtering States
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [sortBy, setSortBy] = useState("featured");
 
   // App States
@@ -190,46 +190,40 @@ export default function App() {
   const [vouchers, setVouchers] = useState(MOCK_VOUCHERS);
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
-  const [orderSuccess, setOrderSuccess] = useState(false);
-  const [toastMsg, setToastMsg] = useState("");
   
-  // Theme State passed down to AccountPage
+  // Checkout States
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [checkoutStep, setCheckoutStep] = useState(1);
+  const [orderSuccess, setOrderSuccess] = useState(false);
+  const [isEditingAddress, setIsEditingAddress] = useState(false);
+  
+  const [toastMsg, setToastMsg] = useState("");
   const [darkMode, setDarkMode] = useState(false);
-
-  // Live USD→LKR exchange rate — all prices are stored in USD, this is only
-  // used to render them as "Rs." for customers. Refreshes once a day.
   const [lkrRate, setLkrRate] = useState(300);
 
-  // User Profile
-  const [userProfile] = useState({
+  // User & Shipping Profile
+  const [shippingDetails, setShippingDetails] = useState({
     name: "Kaveesha",
     email: "vikumkaveesha8@gmail.com",
-    address: "Ipalogama, Anuradhapura"
+    phone: "078 385 8693",
+    address: "Ipalogama",
+    city: "Anuradhapura"
   });
+  
+  const [paymentMethod, setPaymentMethod] = useState("COD");
 
-  // Auto-slide effect for banner
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentBanner((prev) => (prev + 1) % BANNER_DATA.length);
-    }, 5000); // Changes every 5 seconds
-
+    }, 5000);
     return () => clearInterval(timer);
   }, []);
 
-  // Fetch real imported products from Firestore and merge them into the storefront.
-  // Without this, anything imported through the admin panel never reaches customers —
-  // this component previously only ever showed the hardcoded INITIAL_PRODUCTS array.
   useEffect(() => {
     const fetchImportedProducts = async () => {
-      // TEMPORARY DIAGNOSTIC LOGS — remove once we confirm what's happening
-      console.log('[Dexvee Debug] Firebase project ID (client):', db.app.options.projectId);
-
       try {
         const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
         const snapshot = await getDocs(q);
-        console.log('[Dexvee Debug] Documents returned from Firestore:', snapshot.docs.length);
-
         const importedProducts = snapshot.docs.map((doc) => {
           const data = doc.data();
           return {
@@ -249,27 +243,20 @@ export default function App() {
             image: data.image || (Array.isArray(data.images) ? data.images[0] : '') || '',
             images: Array.isArray(data.images) && data.images.length > 0
               ? data.images
-              : (data.image ? [data.image] : [])
+              : (data.image ? [data.image] : []),
+            vid: data.vid || null // CJ variant id — needed to get a real shipping quote
           };
         });
-
-        // Real imported products appear first, demo catalog fills in after —
-        // nothing you already had disappears, but real inventory takes priority.
         setProducts([...importedProducts, ...INITIAL_PRODUCTS]);
       } catch (err) {
-        console.error('Failed to load products from Firestore:', err);
-        // Fall back to the demo catalog so the storefront never shows a blank page
+        console.error('Failed to load products:', err);
       } finally {
         setProductsLoading(false);
       }
     };
-
     fetchImportedProducts();
   }, []);
 
-  // Sync the USD→LKR rate on load, then re-check hourly so a tab left open
-  // overnight still picks up the next day's rate (getUsdToLkrRate itself only
-  // actually calls the API once every 24 hours — this just triggers the check).
   useEffect(() => {
     let isMounted = true;
     const syncRate = () => {
@@ -320,17 +307,99 @@ export default function App() {
     showToast("Removed from cart");
   };
 
-  // Used by the "Buy Now" button on the product page — skips the cart drawer
-  // and goes straight to checkout, same as Daraz's Buy Now flow.
   const handleBuyNow = (product, quantity = 1) => {
     addToCart(product, quantity);
     setIsCartOpen(false);
     setIsCheckoutOpen(true);
+    setCheckoutStep(1); // Reset to first step
+  };
+
+  const handlePlaceOrder = () => {
+    setOrderSuccess(true);
+    setTimeout(() => {
+      setOrderSuccess(false);
+      setIsCheckoutOpen(false);
+      setIsCartOpen(false);
+      setCheckoutStep(1);
+      setCart([]);
+      showToast("Order placed successfully!");
+    }, 3000);
+  };
+
+  const proceedCheckout = () => {
+    if (checkoutStep < 3) {
+      setCheckoutStep(prev => prev + 1);
+    } else {
+      handlePlaceOrder();
+    }
   };
 
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const shippingCost = subtotal > 0 ? (subtotal > 50 ? 0 : 3.99) : 0;
+
+  // Real shipping cost — fetched live from CJ Dropshipping's freight API,
+  // not a guessed flat rate. Free above the promo threshold, same as before.
+  const [shippingCost, setShippingCost] = useState(0);
+  const [shippingLoading, setShippingLoading] = useState(false);
+  const [shippingInfo, setShippingInfo] = useState(null); // { carrier, etaDays, isLiveQuote, fallbackReason }
+
+  useEffect(() => {
+    if (cart.length === 0) {
+      setShippingCost(0);
+      setShippingInfo(null);
+      return;
+    }
+
+    // Free shipping over the promo threshold — no need to call the API.
+    if (subtotal > 50) {
+      setShippingCost(0);
+      setShippingInfo(null);
+      return;
+    }
+
+    let cancelled = false;
+    setShippingLoading(true);
+
+    // Debounce so rapid +/- quantity clicks don't spam the API.
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch('/.netlify/functions/calculate-shipping', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: cart.map((item) => ({ vid: item.vid, quantity: item.quantity })),
+            destCountryCode: 'LK'
+          })
+        });
+        const data = await res.json();
+        if (cancelled) return;
+
+        if (data.success) {
+          setShippingCost(data.shippingCost);
+          setShippingInfo({
+            ...data.breakdown,
+            isLiveQuote: data.isLiveQuote,
+            fallbackReason: data.fallbackReason
+          });
+        } else {
+          console.error('Shipping calculation failed:', data.error);
+          setShippingCost(3.99); // fallback flat rate if the API call itself fails
+          setShippingInfo(null);
+        }
+      } catch (err) {
+        console.error('Shipping calculation error:', err);
+        if (!cancelled) {
+          setShippingCost(3.99);
+          setShippingInfo(null);
+        }
+      } finally {
+        if (!cancelled) setShippingLoading(false);
+      }
+    }, 500);
+
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [cart, subtotal]);
+
   const grandTotal = subtotal + shippingCost;
 
   const filteredProducts = products
@@ -348,6 +417,11 @@ export default function App() {
 
   const flashSaleProducts = products.filter(p => p.isFlashSale).slice(0, 4);
 
+  // Live autocomplete suggestions for the search box, Daraz-style.
+  const searchSuggestions = searchQuery.trim()
+    ? products.filter((p) => p.name.toLowerCase().includes(searchQuery.trim().toLowerCase())).slice(0, 6)
+    : [];
+
   return (
     <Router>
       <div className="min-h-screen font-sans bg-[#F5F5F5] text-gray-800">
@@ -360,26 +434,26 @@ export default function App() {
           </div>
         )}
 
-        {/* Top Minimalist Bar */}
-        <div className="bg-white text-[11px] py-2 px-6 border-b border-gray-200">
-          <div className="max-w-7xl mx-auto flex items-center justify-between text-gray-500">
+        {/* Top Minimalist Bar - Deep Dark */}
+        <div className="bg-[#0D0717] text-[11px] py-2 px-6 border-b border-white/5">
+          <div className="max-w-7xl mx-auto flex items-center justify-between text-gray-400">
             <div className="flex items-center gap-4">
               <span>Welcome to Dexvee</span>
               <span className="hidden md:inline">|</span>
-              <span className="hidden md:inline text-[#2D1B4E] font-medium">Free Shipping on Orders over {formatLKR(50, lkrRate)}</span>
+              <span className="hidden md:inline text-cyan-400 font-medium">Free Shipping on Orders over {formatLKR(50, lkrRate)}</span>
             </div>
             <div className="flex items-center gap-4">
-              <Link to="/admin" className="hover:text-[#2D1B4E] transition-colors">Sell on Dexvee</Link>
-              <Link to="/account" className="hover:text-[#2D1B4E] transition-colors">Track Order</Link>
+              <Link to="/admin" className="hover:text-cyan-400 transition-colors">Sell on Dexvee</Link>
+              <Link to="/account" className="hover:text-cyan-400 transition-colors">Track Order</Link>
             </div>
           </div>
         </div>
 
         {/* Main Solid Brand Header - Dark Purple */}
-        <header className="bg-[#2D1B4E] sticky top-0 z-40 shadow-md">
+        <header className="bg-[#1A0F2E] sticky top-0 z-40 shadow-lg border-b border-fuchsia-500/10">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-6">
             
-            {/* Brand Logo (Full Image without box) */}
+            {/* Brand Logo */}
             <Link to="/" className="flex items-center shrink-0">
                <img 
                  src="/logo.png" 
@@ -388,34 +462,62 @@ export default function App() {
                />
             </Link>
 
-            {/* Search Box - Rounded Pill */}
-            <div className="flex-1 max-w-3xl hidden sm:flex items-center">
-              <div className="w-full flex items-center bg-white rounded-2xl overflow-hidden p-1.5 shadow-inner">
+            {/* Search Box */}
+            <div className="flex-1 max-w-3xl hidden sm:flex items-center relative">
+              <div className="w-full flex items-center bg-white border border-gray-200 rounded-2xl overflow-hidden p-1.5 shadow-inner">
                 <input 
                   type="text" 
                   placeholder="Search in Dexvee..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={() => setShowSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  onKeyDown={(e) => { if (e.key === 'Escape' || e.key === 'Enter') setShowSuggestions(false); }}
                   className="w-full bg-transparent px-5 py-2 text-sm outline-none text-gray-800 placeholder-gray-400"
                 />
-                <button className="px-8 py-2.5 bg-[#1A0F2E] text-white font-semibold text-sm flex items-center gap-2 hover:bg-[#0D0717] transition-colors rounded-xl">
+                <button className="px-8 py-2.5 bg-cyan-500 text-[#0D0717] font-black text-sm flex items-center gap-2 hover:bg-cyan-400 transition-colors rounded-xl shadow-[0_0_15px_rgba(34,211,238,0.3)]">
                   <Search className="w-4 h-4" /> 
                 </button>
               </div>
+
+              {/* Live suggestions dropdown */}
+              {showSuggestions && searchQuery.trim() && (
+                <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden z-50">
+                  {searchSuggestions.length > 0 ? (
+                    searchSuggestions.map((p) => (
+                      <Link
+                        key={p.id}
+                        to={`/product/${p.id}`}
+                        onClick={() => { setSearchQuery(p.name); setShowSuggestions(false); }}
+                        className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-b-0"
+                      >
+                        <img src={p.image} alt={p.name} className="w-10 h-10 object-cover rounded-lg shrink-0 bg-gray-50" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-800 font-medium truncate">{p.name}</p>
+                          <p className="text-xs text-gray-400">{p.category}</p>
+                        </div>
+                        <span className="text-sm font-bold text-[#1A0F2E] shrink-0">{formatLKR(p.price, lkrRate)}</span>
+                      </Link>
+                    ))
+                  ) : (
+                    <div className="px-4 py-6 text-center text-sm text-gray-400">No products found for "{searchQuery}"</div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Header Actions */}
             <div className="flex items-center gap-6 shrink-0 text-white">
-              <Link to="/auth" className="flex items-center gap-2 hover:text-gray-300 transition-colors cursor-pointer bg-white/5 px-4 py-2 rounded-2xl">
+              <Link to="/auth" className="flex items-center gap-2 hover:text-cyan-400 transition-colors cursor-pointer bg-white/5 border border-white/5 px-4 py-2 rounded-2xl">
                 <User className="w-5 h-5" />
                 <span className="text-sm font-medium hidden md:block">Sign In</span>
               </Link>
 
-              <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 hover:text-gray-300 transition-colors bg-white/5 px-4 py-2 rounded-2xl">
+              <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 hover:text-cyan-400 transition-colors bg-white/5 border border-white/5 px-4 py-2 rounded-2xl">
                 <ShoppingCart className="w-5 h-5" />
                 <span className="text-sm font-medium hidden md:block">Cart</span>
                 {totalItems > 0 && (
-                  <span className="absolute -top-2 -right-2 bg-white text-[#2D1B4E] text-[10px] font-black w-6 h-6 rounded-full flex items-center justify-center shadow-lg">
+                  <span className="absolute -top-2 -right-2 bg-fuchsia-500 text-white text-[10px] font-black w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_10px_rgba(217,70,239,0.5)]">
                     {totalItems}
                   </span>
                 )}
@@ -429,12 +531,9 @@ export default function App() {
           <Route path="/" element={
             <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-24 space-y-10">
               
-              {/* Daraz-Style Split Hero Banner with Auto-Slider */}
+              {/* Split Hero Banner */}
               <div className="flex flex-col lg:flex-row gap-4">
-                
-                {/* Main Large Auto-Sliding Banner (75%) */}
-                <div className="w-full lg:w-3/4 relative bg-[#0D0717] rounded-3xl overflow-hidden shadow-sm border border-[#2D1B4E] min-h-[320px]">
-                  
+                <div className="w-full lg:w-3/4 relative bg-[#0D0717] rounded-3xl overflow-hidden shadow-sm border border-white/10 min-h-[320px]">
                   {BANNER_DATA.map((banner, index) => (
                     <div
                       key={banner.id}
@@ -442,80 +541,43 @@ export default function App() {
                         index === currentBanner ? "opacity-100 z-10" : "opacity-0 z-0"
                       }`}
                     >
-                      {/* Image Background with Dark Gradient Overlay */}
-                      <div 
-                        className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-30"
-                        style={{ backgroundImage: `url(${banner.bgImg})` }}
-                      />
+                      <div className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-30" style={{ backgroundImage: `url(${banner.bgImg})` }} />
                       <div className="absolute inset-0 bg-gradient-to-r from-[#0D0717] via-[#0D0717]/80 to-transparent" />
-                      
-                      {/* Glowing Ambient Background Elements */}
                       <div className={`absolute top-0 right-0 w-96 h-96 ${banner.bgAccents[0]} rounded-full blur-3xl -translate-y-1/2 translate-x-1/3`}></div>
                       <div className={`absolute bottom-0 left-10 w-72 h-72 ${banner.bgAccents[1]} rounded-full blur-3xl translate-y-1/2`}></div>
-                      
-                      {/* Banner Content */}
                       <div className="relative z-20 p-10 md:p-14 w-full md:w-2/3">
-                        <div className={`inline-block px-3 py-1 mb-4 border ${banner.tagClass} text-xs font-black tracking-widest uppercase rounded-full`}>
-                          {banner.tag}
-                        </div>
+                        <div className={`inline-block px-3 py-1 mb-4 border ${banner.tagClass} text-xs font-black tracking-widest uppercase rounded-full`}>{banner.tag}</div>
                         <h1 className="text-4xl md:text-5xl font-black text-white leading-tight mb-4">
                           {banner.titleTop} <br />
-                          <span className={`text-transparent bg-clip-text bg-gradient-to-r ${banner.highlightClass}`}>
-                            {banner.highlight}
-                          </span>
+                          <span className={`text-transparent bg-clip-text bg-gradient-to-r ${banner.highlightClass}`}>{banner.highlight}</span>
                         </h1>
-                        <p className="text-gray-300 mb-8 font-medium">
-                          {banner.desc}
-                        </p>
-                        <button className={`${banner.btnClass} text-white px-8 py-3.5 rounded-2xl font-black uppercase tracking-wider transition-all`}>
-                          {banner.btnText}
-                        </button>
+                        <p className="text-gray-300 mb-8 font-medium">{banner.desc}</p>
+                        <button className={`${banner.btnClass} text-white px-8 py-3.5 rounded-2xl font-black uppercase tracking-wider transition-all`}>{banner.btnText}</button>
                       </div>
                     </div>
                   ))}
-
-                  {/* Slider Dot Indicators */}
                   <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-black/20 px-3 py-1.5 rounded-full backdrop-blur-sm">
                     {BANNER_DATA.map((_, index) => (
-                      <button
-                        key={index}
-                        onClick={() => setCurrentBanner(index)}
-                        className={`transition-all duration-300 rounded-full ${
-                          index === currentBanner ? "w-6 h-2 bg-white" : "w-2 h-2 bg-white/40 hover:bg-white/80"
-                        }`}
-                        aria-label={`Go to slide ${index + 1}`}
-                      />
+                      <button key={index} onClick={() => setCurrentBanner(index)} className={`transition-all duration-300 rounded-full ${index === currentBanner ? "w-6 h-2 bg-white" : "w-2 h-2 bg-white/40 hover:bg-white/80"}`} />
                     ))}
                   </div>
                 </div>
 
-                {/* Side Promo/Voucher Banner (25%) */}
-                <div className="w-full lg:w-1/4 bg-[#1A0F2E] rounded-3xl p-6 shadow-sm border border-[#2D1B4E] flex flex-col justify-center relative overflow-hidden">
+                <div className="w-full lg:w-1/4 bg-[#1A0F2E] rounded-3xl p-6 shadow-sm border border-white/10 flex flex-col justify-center relative overflow-hidden">
                   <div className="relative z-10 text-center">
                     <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/10">
                       <Gift className="w-6 h-6 text-fuchsia-400" />
                     </div>
                     <h3 className="text-white font-black text-lg mb-1">Claim Vouchers</h3>
                     <p className="text-gray-400 text-xs font-medium mb-6">Exclusive savings inside</p>
-                    
                     <div className="space-y-3">
                       {vouchers.map(v => (
-                        <div key={v.id} className="bg-[#0D0717] border border-[#2D1B4E] rounded-2xl p-4 flex items-center justify-between">
+                        <div key={v.id} className="bg-[#0D0717] border border-white/10 rounded-2xl p-4 flex items-center justify-between">
                           <div className="text-left">
-                            <div className="text-cyan-400 font-black text-lg leading-none">
-                              {v.type === "percent" ? `${v.discount}% OFF` : `${formatLKR(v.discount, lkrRate)} OFF`}
-                            </div>
+                            <div className="text-cyan-400 font-black text-lg leading-none">{v.type === "percent" ? `${v.discount}% OFF` : `${formatLKR(v.discount, lkrRate)} OFF`}</div>
                             <div className="text-gray-500 text-[10px] mt-1 uppercase tracking-wider">Min {formatLKR(v.minSpend, lkrRate)}</div>
                           </div>
-                          <button 
-                            onClick={() => collectVoucher(v.id)}
-                            disabled={v.collected}
-                            className={`text-xs font-bold px-4 py-2 rounded-xl transition-all ${
-                              v.collected 
-                                ? 'bg-gray-800 text-gray-500 cursor-not-allowed' 
-                                : 'bg-white text-[#0D0717] hover:bg-cyan-400 hover:shadow-[0_0_15px_rgba(34,211,238,0.4)]'
-                            }`}
-                          >
+                          <button onClick={() => collectVoucher(v.id)} disabled={v.collected} className={`text-xs font-bold px-4 py-2 rounded-xl transition-all ${v.collected ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-white text-[#0D0717] hover:bg-cyan-400 hover:shadow-[0_0_15px_rgba(34,211,238,0.4)]'}`}>
                             {v.collected ? "Got It" : "Claim"}
                           </button>
                         </div>
@@ -533,14 +595,8 @@ export default function App() {
                     const IconComp = cat.icon;
                     const isSelected = selectedCategory === cat.id;
                     return (
-                      <button
-                        key={cat.id}
-                        onClick={() => setSelectedCategory(cat.id)}
-                        className={`flex flex-col items-center justify-center gap-3 p-5 rounded-2xl transition-all ${
-                          isSelected ? 'bg-[#2D1B4E]/10 text-[#2D1B4E] border-2 border-[#2D1B4E]/20 shadow-sm' : 'hover:bg-gray-50 text-gray-600 border-2 border-transparent hover:border-gray-100'
-                        }`}
-                      >
-                        <IconComp className={`w-7 h-7 ${isSelected ? 'text-[#2D1B4E]' : 'text-gray-400'}`} />
+                      <button key={cat.id} onClick={() => setSelectedCategory(cat.id)} className={`flex flex-col items-center justify-center gap-3 p-5 rounded-2xl transition-all ${isSelected ? 'bg-[#1A0F2E]/10 text-[#1A0F2E] border-2 border-[#1A0F2E]/20 shadow-sm' : 'hover:bg-gray-50 text-gray-600 border-2 border-transparent hover:border-gray-100'}`}>
+                        <IconComp className={`w-7 h-7 ${isSelected ? 'text-[#1A0F2E]' : 'text-gray-400'}`} />
                         <span className="text-sm font-semibold">{cat.name}</span>
                       </button>
                     );
@@ -551,20 +607,20 @@ export default function App() {
               {/* Flash Sale Banner */}
               <section className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
                 <div className="flex items-center gap-3 mb-6 px-2">
-                  <h2 className="text-[#2D1B4E] text-2xl font-black">Flash Sale</h2>
-                  <span className="bg-[#2D1B4E] text-white text-xs px-3 py-1 rounded-xl font-bold uppercase tracking-widest shadow-sm">Live</span>
+                  <h2 className="text-[#1A0F2E] text-2xl font-black">Flash Sale</h2>
+                  <span className="bg-[#1A0F2E] text-white text-xs px-3 py-1 rounded-xl font-bold uppercase tracking-widest shadow-sm">Live</span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                   {flashSaleProducts.map((product) => (
                     <Link key={product.id} to={`/product/${product.id}`} className="group cursor-pointer bg-gray-50 rounded-3xl p-3 hover:shadow-md transition-all border border-transparent hover:border-gray-200 block">
                       <div className="aspect-square bg-white mb-4 overflow-hidden rounded-2xl relative">
                         <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                        <div className="absolute top-3 right-3 bg-[#2D1B4E] text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow-lg">
+                        <div className="absolute top-3 right-3 bg-[#1A0F2E] text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow-lg">
                           -{Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)}%
                         </div>
                       </div>
                       <div className="px-2 pb-2">
-                        <div className="text-[#2D1B4E] text-xl font-black">{formatLKR(product.price, lkrRate)}</div>
+                        <div className="text-[#1A0F2E] text-xl font-black">{formatLKR(product.price, lkrRate)}</div>
                         <div className="text-gray-400 text-sm line-through font-medium">{formatLKR(product.originalPrice, lkrRate)}</div>
                       </div>
                     </Link>
@@ -576,47 +632,30 @@ export default function App() {
               <section>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 px-2">
                   <h2 className="text-2xl text-gray-800 font-black">Just For You</h2>
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value)}
-                    className="border border-gray-200 text-sm font-medium rounded-xl px-4 py-2.5 outline-none text-gray-600 bg-white hover:border-gray-300 transition-colors shadow-sm"
-                  >
+                  <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="border border-gray-200 text-sm font-medium rounded-xl px-4 py-2.5 outline-none text-gray-600 bg-white hover:border-gray-300 transition-colors shadow-sm">
                     <option value="featured">Best Match</option>
                     <option value="price-low">Price Low to High</option>
                     <option value="price-high">Price High to Low</option>
                   </select>
                 </div>
-
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6">
                   {filteredProducts.map((product) => (
-                    <div 
-                      key={product.id}
-                      className="bg-white rounded-3xl border border-gray-100 hover:border-[#2D1B4E]/30 hover:shadow-xl transition-all duration-300 flex flex-col justify-between overflow-hidden"
-                    >
+                    <div key={product.id} className="group bg-white rounded-3xl border border-gray-100 hover:border-[#1A0F2E]/30 hover:shadow-xl transition-all duration-300 flex flex-col justify-between overflow-hidden">
                       <Link to={`/product/${product.id}`} className="cursor-pointer block">
                         <div className="aspect-square bg-gray-50 overflow-hidden relative">
                           <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
                         </div>
                         <div className="p-5">
-                          <h3 className="text-sm font-semibold text-gray-800 line-clamp-2 leading-snug h-10 mb-2 group-hover:text-[#2D1B4E]">
-                            {product.name}
-                          </h3>
-                          <div className="text-[#2D1B4E] text-xl font-black mb-2">
-                            {formatLKR(product.price, lkrRate)}
-                          </div>
+                          <h3 className="text-sm font-semibold text-gray-800 line-clamp-2 leading-snug h-10 mb-2 group-hover:text-[#1A0F2E]">{product.name}</h3>
+                          <div className="text-[#1A0F2E] text-xl font-black mb-2">{formatLKR(product.price, lkrRate)}</div>
                           <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium mb-2">
                             <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
-                            <span>{product.rating}</span>
-                            <span className="mx-1 opacity-50">•</span>
-                            <span>{product.soldCount} Sold</span>
+                            <span>{product.rating}</span><span className="mx-1 opacity-50">•</span><span>{product.soldCount} Sold</span>
                           </div>
                         </div>
                       </Link>
                       <div className="px-5 pb-5">
-                        <button
-                          onClick={() => addToCart(product)}
-                          className="w-full py-2.5 border-2 border-[#2D1B4E] text-[#2D1B4E] hover:bg-[#2D1B4E] hover:text-white rounded-xl text-xs font-black transition-colors uppercase tracking-wider"
-                        >
+                        <button onClick={() => addToCart(product)} className="w-full py-2.5 border-2 border-[#1A0F2E] text-[#1A0F2E] hover:bg-[#1A0F2E] hover:text-white rounded-xl text-xs font-black transition-colors uppercase tracking-wider">
                           Add to Cart
                         </button>
                       </div>
@@ -627,22 +666,14 @@ export default function App() {
             </main>
           } />
 
-          {/* New Connected Routes */}
-          <Route path="/product/:id" element={
-            <ProductPage
-              products={products}
-              lkrRate={lkrRate}
-              onAddToCart={addToCart}
-              onBuyNow={handleBuyNow}
-            />
-          } />
+          <Route path="/product/:id" element={<ProductPage products={products} lkrRate={lkrRate} onAddToCart={addToCart} onBuyNow={handleBuyNow} />} />
           <Route path="/about" element={<AboutUs />} />
           <Route path="/auth" element={<AuthPage />} />
           <Route path="/account" element={<AccountPage darkMode={darkMode} setDarkMode={setDarkMode} />} />
           <Route path="/admin" element={<AdminImporter />} />
         </Routes>
 
-        {/* Simple Sidebar Cart */}
+        {/* Sidebar Cart */}
         {isCartOpen && (
           <div className="fixed inset-0 z-50 flex justify-end">
             <div onClick={() => setIsCartOpen(false)} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
@@ -664,12 +695,12 @@ export default function App() {
                       <img src={item.image} alt="" className="w-20 h-20 object-cover border border-gray-100 rounded-2xl" />
                       <div className="flex-1 flex flex-col justify-center">
                         <h4 className="text-sm font-semibold text-gray-800 line-clamp-2">{item.name}</h4>
-                        <p className="text-[#2D1B4E] font-black text-base mt-1">{formatLKR(item.price, lkrRate)}</p>
+                        <p className="text-[#1A0F2E] font-black text-base mt-1">{formatLKR(item.price, lkrRate)}</p>
                         <div className="flex items-center gap-4 mt-3">
                           <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden">
-                            <button onClick={() => updateQuantity(item.id, -1)} className="px-3 py-1 text-gray-600 hover:bg-gray-100 transition-colors">-</button>
+                            <button onClick={() => updateQuantity(item.id, -1)} className="px-3 py-1.5 text-gray-600 hover:bg-gray-100 transition-colors"><Minus className="w-3.5 h-3.5" /></button>
                             <span className="text-xs w-8 text-center font-bold">{item.quantity}</span>
-                            <button onClick={() => updateQuantity(item.id, 1)} className="px-3 py-1 text-gray-600 hover:bg-gray-100 transition-colors">+</button>
+                            <button onClick={() => updateQuantity(item.id, 1)} className="px-3 py-1.5 text-gray-600 hover:bg-gray-100 transition-colors"><Plus className="w-3.5 h-3.5" /></button>
                           </div>
                           <button onClick={() => removeFromCart(item.id)} className="text-gray-400 hover:text-red-500 transition-colors p-1.5 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
                         </div>
@@ -682,20 +713,11 @@ export default function App() {
               {cart.length > 0 && (
                 <div className="p-6 border-t border-gray-100 bg-gray-50">
                   <div className="space-y-3 mb-6">
-                    <div className="flex justify-between text-sm text-gray-500 font-medium">
-                      <span>Subtotal</span><span className="text-gray-800">{formatLKR(subtotal, lkrRate)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm text-gray-500 font-medium">
-                      <span>Shipping</span><span className="text-gray-800">{shippingCost === 0 ? "Free" : formatLKR(shippingCost, lkrRate)}</span>
-                    </div>
-                    <div className="flex justify-between font-black text-gray-900 text-2xl pt-3 border-t border-gray-200">
-                      <span>Total</span><span className="text-[#2D1B4E]">{formatLKR(grandTotal, lkrRate)}</span>
-                    </div>
+                    <div className="flex justify-between text-sm text-gray-500 font-medium"><span>Subtotal</span><span className="text-gray-800">{formatLKR(subtotal, lkrRate)}</span></div>
+                    <div className="flex justify-between text-sm text-gray-500 font-medium"><span>Shipping</span><span className="text-gray-800">{shippingLoading ? "Calculating…" : (shippingCost === 0 ? "Free" : formatLKR(shippingCost, lkrRate))}</span></div>
+                    <div className="flex justify-between font-black text-gray-900 text-2xl pt-3 border-t border-gray-200"><span>Total</span><span className="text-[#1A0F2E]">{formatLKR(grandTotal, lkrRate)}</span></div>
                   </div>
-                  <button 
-                    onClick={() => setIsCheckoutOpen(true)}
-                    className="w-full py-4 bg-[#2D1B4E] text-white text-sm font-black rounded-2xl hover:bg-[#1A0F2E] uppercase tracking-widest transition-all shadow-lg hover:-translate-y-0.5"
-                  >
+                  <button onClick={() => { setIsCartOpen(false); setIsCheckoutOpen(true); setCheckoutStep(1); }} className="w-full py-4 bg-[#1A0F2E] text-white text-sm font-black rounded-2xl hover:bg-[#0D0717] uppercase tracking-widest transition-all shadow-lg hover:-translate-y-0.5">
                     PROCEED TO CHECKOUT
                   </button>
                 </div>
@@ -704,61 +726,291 @@ export default function App() {
           </div>
         )}
 
-        {/* Minimal Checkout Modal */}
+        {/* Dynamic Step-by-Step Checkout Full Takeover */}
         {isCheckoutOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsCheckoutOpen(false)} />
-            <div className="relative w-full max-w-md bg-white rounded-3xl p-8 z-10 shadow-2xl">
-              <button onClick={() => setIsCheckoutOpen(false)} className="absolute top-6 right-6 p-2 bg-gray-50 hover:bg-gray-100 rounded-full transition-colors"><X className="w-5 h-5 text-gray-500" /></button>
-              
-              {orderSuccess ? (
-                <div className="text-center py-10">
-                  <div className="w-20 h-20 bg-[#2D1B4E]/10 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <CheckCircle2 className="w-10 h-10 text-[#2D1B4E]" />
+          <div className="fixed inset-0 z-50 bg-[#F5F5F5] overflow-y-auto font-sans">
+            {/* Checkout Header */}
+            <div className="bg-[#1A0F2E] border-b border-fuchsia-500/10 px-6 py-4 sticky top-0 z-40 flex items-center justify-between shadow-sm">
+              <div className="flex items-center gap-3 max-w-7xl mx-auto w-full">
+                <img src="/logo.png" alt="Dexvee" className="h-8 object-contain" />
+                <span className="text-2xl font-black text-white border-l-2 border-white/20 pl-3">Secure Checkout</span>
+              </div>
+              <button onClick={() => setIsCheckoutOpen(false)} className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors absolute right-6">
+                <X className="w-5 h-5 text-white" />
+              </button>
+            </div>
+
+            {orderSuccess ? (
+              <div className="flex items-center justify-center min-h-[80vh]">
+                <div className="text-center bg-white p-10 rounded-3xl shadow-xl max-w-md w-full border border-gray-100">
+                  <div className="w-24 h-24 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <CheckCircle2 className="w-12 h-12 text-emerald-500" />
                   </div>
-                  <h3 className="text-2xl font-black text-gray-800">Order Placed!</h3>
-                  <p className="text-gray-500 mt-2 font-medium">Check your account to track delivery.</p>
+                  <h3 className="text-3xl font-black text-[#1A0F2E] mb-2">Order Confirmed!</h3>
+                  <p className="text-gray-500 font-medium">Thank you! Your items will be shipped soon.</p>
                 </div>
-              ) : (
-                <form onSubmit={(e) => {
-                  e.preventDefault();
-                  setOrderSuccess(true);
-                  setTimeout(() => {
-                    setOrderSuccess(false);
-                    setIsCheckoutOpen(false);
-                    setIsCartOpen(false);
-                    setCart([]);
-                    showToast("Order placed!");
-                  }, 2000);
-                }}>
-                  <h3 className="text-2xl font-black mb-6 text-gray-800">Checkout Info</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Full Name</label>
-                      <input required type="text" defaultValue={userProfile.name} className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:border-[#2D1B4E] transition-colors" />
+              </div>
+            ) : (
+              <div className="max-w-6xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                
+                {/* LEFT COLUMN: Dynamic Wizard Steps */}
+                <div className="lg:col-span-8 space-y-6">
+                  
+                  {/* Stepper Visualization */}
+                  <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 mb-6">
+                    <div className="relative flex items-center justify-between w-full max-w-md mx-auto mb-2">
+                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-1.5 bg-gray-100 rounded-full z-0"></div>
+                      <div className="absolute left-0 top-1/2 -translate-y-1/2 h-1.5 bg-cyan-400 rounded-full z-0 transition-all duration-500" 
+                           style={{ width: checkoutStep === 1 ? '0%' : checkoutStep === 2 ? '50%' : '100%' }}></div>
+                      
+                      {[1, 2, 3].map(step => (
+                        <div key={step} className={`relative z-10 w-10 h-10 rounded-full flex items-center justify-center font-black text-sm transition-colors duration-300 ${
+                          checkoutStep >= step ? 'bg-[#1A0F2E] text-white shadow-md border-2 border-white' : 'bg-gray-100 text-gray-400'
+                        }`}>
+                          {step}
+                        </div>
+                      ))}
                     </div>
-                    <div>
-                      <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Shipping Address</label>
-                      <input required type="text" defaultValue={userProfile.address} className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:border-[#2D1B4E] transition-colors" />
+                    <div className="flex justify-between max-w-md mx-auto text-xs font-bold text-gray-400 px-1">
+                      <span className={checkoutStep >= 1 ? 'text-[#1A0F2E]' : ''}>Shipping</span>
+                      <span className={checkoutStep >= 2 ? 'text-[#1A0F2E]' : ''}>Payment</span>
+                      <span className={checkoutStep >= 3 ? 'text-[#1A0F2E]' : ''}>Review</span>
                     </div>
-                    <div className="pt-4">
-                      <button type="submit" className="w-full py-4 bg-[#2D1B4E] text-white font-black text-sm rounded-2xl hover:bg-[#1A0F2E] shadow-lg transition-all uppercase tracking-widest">
-                        Pay {formatLKR(grandTotal, lkrRate)}
+                  </div>
+
+                  {/* STEP 1: Address & Delivery */}
+                  {checkoutStep === 1 && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+                        <div className="flex justify-between items-center mb-6">
+                          <h3 className="text-lg font-black text-gray-800 flex items-center gap-2">
+                            <MapPin className="w-5 h-5 text-cyan-500" /> Shipping Details
+                          </h3>
+                          {!isEditingAddress && (
+                            <button onClick={() => setIsEditingAddress(true)} className="text-xs font-bold text-cyan-500 flex items-center gap-1 hover:text-cyan-600 transition-colors uppercase">
+                              <Edit3 className="w-3.5 h-3.5" /> Edit
+                            </button>
+                          )}
+                        </div>
+
+                        {isEditingAddress ? (
+                          <div className="space-y-4 bg-gray-50 p-5 rounded-2xl border border-gray-200">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="col-span-2">
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">Full Name</label>
+                                <input type="text" value={shippingDetails.name} onChange={e => setShippingDetails({...shippingDetails, name: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-cyan-400 transition-colors" />
+                              </div>
+                              <div className="col-span-2 sm:col-span-1">
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">Phone Number</label>
+                                <input type="text" value={shippingDetails.phone} onChange={e => setShippingDetails({...shippingDetails, phone: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-cyan-400 transition-colors" />
+                              </div>
+                              <div className="col-span-2 sm:col-span-1">
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">City</label>
+                                <input type="text" value={shippingDetails.city} onChange={e => setShippingDetails({...shippingDetails, city: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-cyan-400 transition-colors" />
+                              </div>
+                              <div className="col-span-2">
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">Street Address</label>
+                                <input type="text" value={shippingDetails.address} onChange={e => setShippingDetails({...shippingDetails, address: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-cyan-400 transition-colors" />
+                              </div>
+                            </div>
+                            <button onClick={() => setIsEditingAddress(false)} className="bg-[#1A0F2E] text-white text-xs font-bold px-6 py-2.5 rounded-xl hover:bg-[#0D0717] transition-colors mt-2">
+                              Save Address
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="p-4 border border-gray-100 rounded-2xl bg-gray-50 flex items-start gap-4">
+                            <div className="mt-1 bg-cyan-100 p-2 rounded-full"><MapPin className="w-4 h-4 text-cyan-600" /></div>
+                            <div>
+                              <div className="flex items-center gap-3 mb-1">
+                                <span className="font-bold text-gray-800">{shippingDetails.name}</span>
+                                <span className="text-xs text-gray-500 font-bold bg-white px-2 py-0.5 rounded-md border border-gray-200">{shippingDetails.phone}</span>
+                              </div>
+                              <p className="text-sm text-gray-600 font-medium leading-relaxed">
+                                {shippingDetails.address}, {shippingDetails.city}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+                        <h3 className="text-lg font-black text-gray-800 flex items-center gap-2 mb-6">
+                          <Truck className="w-5 h-5 text-cyan-500" /> Delivery Options
+                        </h3>
+                        <label className="flex items-start gap-4 p-4 border-2 border-cyan-400 bg-cyan-50 rounded-2xl cursor-pointer relative overflow-hidden">
+                          <div className="absolute top-0 left-0 w-1.5 h-full bg-cyan-400"></div>
+                          <div className="mt-1 flex-shrink-0 w-5 h-5 rounded-full border-4 border-cyan-500 bg-white shadow-sm"></div>
+                          <div>
+                            <div className="flex items-center gap-3">
+                              <span className="font-black text-gray-800">{shippingLoading ? "Calculating…" : (shippingCost === 0 ? "FREE" : formatLKR(shippingCost, lkrRate))}</span>
+                              <span className="text-sm font-bold text-[#1A0F2E]">
+                                {shippingInfo?.isLiveQuote ? shippingInfo.carrier : "Estimated Delivery"}
+                              </span>
+                            </div>
+                            <p className="text-xs font-medium text-gray-500 mt-1">
+                              {shippingInfo?.isLiveQuote && shippingInfo?.etaDays
+                                ? `Guaranteed by ${shippingInfo.etaDays} business days`
+                                : "Guaranteed by 3-5 Business Days"}
+                            </p>
+                            {shippingInfo?.fallbackReason && (
+                              <p className="text-[11px] text-amber-600 mt-1">{shippingInfo.fallbackReason}</p>
+                            )}
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* STEP 2: Payment Method */}
+                  {checkoutStep === 2 && (
+                    <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 animate-in fade-in slide-in-from-right-8 duration-300">
+                      <h3 className="text-lg font-black text-gray-800 flex items-center gap-2 mb-6">
+                        <Banknote className="w-5 h-5 text-fuchsia-500" /> Select Payment Method
+                      </h3>
+                      <div className="space-y-3">
+                        <label className={`flex items-center justify-between p-5 border-2 rounded-2xl cursor-pointer transition-all ${paymentMethod === 'COD' ? 'border-fuchsia-500 bg-fuchsia-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
+                          <div className="flex items-center gap-4">
+                            <div className={`p-2 rounded-xl ${paymentMethod === 'COD' ? 'bg-fuchsia-100 text-fuchsia-600' : 'bg-gray-100 text-gray-400'}`}><Banknote className="w-6 h-6" /></div>
+                            <div>
+                              <span className="font-bold text-gray-800 block">Cash on Delivery</span>
+                              <span className="text-xs text-gray-500 font-medium">Pay securely when your package arrives</span>
+                            </div>
+                          </div>
+                          <div className={`w-6 h-6 rounded-full border-4 ${paymentMethod === 'COD' ? 'border-fuchsia-500 bg-white' : 'border-gray-300'}`}></div>
+                          <input type="radio" name="payment" className="hidden" checked={paymentMethod === 'COD'} onChange={() => setPaymentMethod('COD')} />
+                        </label>
+                        
+                        <label className={`flex items-center justify-between p-5 border-2 rounded-2xl cursor-pointer transition-all ${paymentMethod === 'CARD' ? 'border-fuchsia-500 bg-fuchsia-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
+                          <div className="flex items-center gap-4">
+                            <div className={`p-2 rounded-xl ${paymentMethod === 'CARD' ? 'bg-fuchsia-100 text-fuchsia-600' : 'bg-gray-100 text-gray-400'}`}><CreditCard className="w-6 h-6" /></div>
+                            <div>
+                              <span className="font-bold text-gray-800 block">Credit/Debit Card</span>
+                              <span className="text-xs text-gray-500 font-medium">Visa, MasterCard, Amex</span>
+                            </div>
+                          </div>
+                          <div className={`w-6 h-6 rounded-full border-4 ${paymentMethod === 'CARD' ? 'border-fuchsia-500 bg-white' : 'border-gray-300'}`}></div>
+                          <input type="radio" name="payment" className="hidden" checked={paymentMethod === 'CARD'} onChange={() => setPaymentMethod('CARD')} />
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* STEP 3: Review Items */}
+                  {checkoutStep === 3 && (
+                    <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 animate-in fade-in zoom-in-95 duration-300">
+                      <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-lg font-black text-gray-800 flex items-center gap-2">
+                          <Package className="w-5 h-5 text-[#1A0F2E]" /> Order Items
+                        </h3>
+                        <span className="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded-md">Package 1 of 1</span>
+                      </div>
+                      <div className="space-y-4">
+                        {cart.map((item) => (
+                          <div key={item.id} className="flex gap-4 p-4 border border-gray-100 rounded-2xl bg-gray-50/50">
+                            <img src={item.image} alt={item.name} className="w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-xl border border-gray-200 bg-white" />
+                            <div className="flex-1 flex flex-col justify-between">
+                              <div>
+                                <h4 className="text-sm font-bold text-gray-800 line-clamp-2">{item.name}</h4>
+                                <p className="text-xs text-gray-400 mt-1 font-medium">{item.supplier}</p>
+                              </div>
+                            </div>
+                            <div className="text-right flex flex-col justify-between">
+                              <div>
+                                <div className="text-[#1A0F2E] font-black text-lg">{formatLKR(item.price, lkrRate)}</div>
+                                {item.originalPrice && (
+                                  <div className="flex items-center justify-end gap-2">
+                                    <div className="text-xs text-gray-400 line-through font-medium">{formatLKR(item.originalPrice, lkrRate)}</div>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="text-xs font-bold text-gray-600 bg-white border border-gray-200 self-end px-3 py-1 rounded-lg">Qty: {item.quantity}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* RIGHT COLUMN: Static Order Summary */}
+                <div className="lg:col-span-4 space-y-6">
+                  
+                  {/* Promo Input */}
+                  <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+                    <h3 className="text-sm font-black text-gray-800 mb-3 uppercase tracking-wider">Promotion</h3>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        placeholder="Enter Voucher Code" 
+                        className="flex-1 border-2 border-gray-100 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-cyan-400 transition-colors" 
+                      />
+                      <button className="bg-[#1A0F2E] hover:bg-[#0D0717] text-white font-black px-6 py-2.5 rounded-xl text-sm transition-colors">
+                        APPLY
                       </button>
                     </div>
                   </div>
-                </form>
-              )}
-            </div>
+
+                  {/* Summary Card */}
+                  <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-[#1A0F2E]/10 sticky top-24">
+                    <h3 className="text-lg font-black text-gray-800 mb-4">Order Summary</h3>
+                    
+                    <div className="space-y-3 mb-6">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500 font-medium">Items Total ({totalItems})</span>
+                        <span className="font-bold text-gray-800">{formatLKR(subtotal, lkrRate)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500 font-medium">Delivery Fee</span>
+                        <span className="font-bold text-gray-800">{shippingLoading ? "Calculating…" : (shippingCost === 0 ? "FREE" : formatLKR(shippingCost, lkrRate))}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="border-t border-gray-100 pt-4 mb-6">
+                      <div className="flex justify-between items-end">
+                        <span className="text-gray-500 font-bold">Total</span>
+                        <div className="text-right">
+                          <div className="text-3xl font-black text-gray-900 leading-none mb-1">
+                            {formatLKR(grandTotal, lkrRate)}
+                          </div>
+                          <div className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">VAT Included</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={proceedCheckout} 
+                      disabled={isEditingAddress && checkoutStep === 1}
+                      className={`w-full py-4 rounded-2xl font-black text-sm tracking-widest uppercase transition-all shadow-lg flex items-center justify-center gap-2 ${
+                        isEditingAddress && checkoutStep === 1 
+                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed' 
+                        : 'bg-[#1A0F2E] hover:bg-[#0D0717] text-white hover:-translate-y-1 hover:shadow-cyan-500/20'
+                      }`}
+                    >
+                      {checkoutStep === 1 && "Proceed to Payment"}
+                      {checkoutStep === 2 && "Review Order"}
+                      {checkoutStep === 3 && "Place Order"}
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    
+                    {checkoutStep > 1 && (
+                      <button onClick={() => setCheckoutStep(prev => prev - 1)} className="w-full mt-4 py-2 text-xs font-bold text-gray-400 hover:text-gray-800 transition-colors uppercase tracking-wider">
+                        Go Back
+                      </button>
+                    )}
+                  </div>
+                </div>
+                
+              </div>
+            )}
           </div>
         )}
 
         {/* Minimalist Footer */}
         <footer className="bg-white border-t border-gray-200 mt-16 py-10 text-center">
           <div className="flex justify-center gap-6 mb-4 text-xs font-semibold text-gray-500">
-            <Link to="/about" className="hover:text-[#2D1B4E]">About Us</Link>
+            <Link to="/about" className="hover:text-cyan-600 transition-colors">About Us</Link>
             <span>•</span>
-            <Link to="/account" className="hover:text-[#2D1B4E]">Track Order</Link>
+            <Link to="/account" className="hover:text-cyan-600 transition-colors">Track Order</Link>
           </div>
           <p className="text-sm font-medium text-gray-400">© 2026 Dexvee Express. All rights reserved.</p>
         </footer>

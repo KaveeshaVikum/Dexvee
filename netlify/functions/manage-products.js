@@ -13,13 +13,15 @@ if (!getApps().length) {
 
 const db = getFirestore();
 
-function calculatePricing(costPrice, markupPercent) {
+function calculatePricing(costPrice, shippingFee, markupPercent) {
   const cost = parseFloat(costPrice) || 0;
+  const shipping = parseFloat(shippingFee) || 0;
+  const totalCost = parseFloat((cost + shipping).toFixed(2));
   const markup = parseFloat(markupPercent) || 40;
-  const sellingPrice = parseFloat((cost * (1 + markup / 100)).toFixed(2));
-  const totalProfit = parseFloat((sellingPrice - cost).toFixed(2));
+  const sellingPrice = parseFloat((totalCost * (1 + markup / 100)).toFixed(2));
+  const totalProfit = parseFloat((sellingPrice - totalCost).toFixed(2));
   const partnerSplit = parseFloat((totalProfit / 2).toFixed(2));
-  return { costPrice: cost, sellingPrice, totalProfit, partnerSplit };
+  return { costPrice: cost, shippingFee: shipping, totalCost, sellingPrice, totalProfit, partnerSplit };
 }
 
 export const handler = async (event) => {
@@ -31,12 +33,12 @@ export const handler = async (event) => {
     const data = JSON.parse(event.body);
 
     if (data.action === 'add') {
-      const { name, category, costPrice, supplier, image, tag, markupPercent } = data;
+      const { name, category, costPrice, shippingFee, supplier, image, tag, markupPercent } = data;
       if (!name || !costPrice) {
         throw new Error('Product name and cost price are required.');
       }
 
-      const pricing = calculatePricing(costPrice, markupPercent);
+      const pricing = calculatePricing(costPrice, shippingFee, markupPercent);
 
       const productDocument = {
         name,

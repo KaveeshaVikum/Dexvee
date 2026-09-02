@@ -193,6 +193,28 @@ export default function AdminDashboard() {
     }
   };
 
+  const [backfilling, setBackfilling] = useState(false);
+
+  // One-time fix for products imported before we started tracking CJ's
+  // variant id (vid) — without it, live shipping quotes can't be fetched
+  // and checkout silently falls back to the same flat rate for everything.
+  const handleBackfillShipping = async () => {
+    setBackfilling(true);
+    try {
+      const res = await fetch('/.netlify/functions/backfill-vid', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showStatus('success', data.message);
+      } else {
+        showStatus('error', data.error || 'Backfill failed.');
+      }
+    } catch (err) {
+      showStatus('error', 'Network error connecting to Netlify function.');
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
   const totalStoreProfit = products.reduce((sum, p) => sum + (p.profit || 0), 0);
   const myShare = totalStoreProfit / 2;
 
@@ -246,6 +268,19 @@ export default function AdminDashboard() {
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleBackfillShipping}
+            disabled={backfilling}
+            title="One-time fix: fetches the missing CJ variant ID for products imported before live shipping quotes were added, so checkout can price them correctly instead of using a flat fallback rate."
+            className={`text-xs font-bold flex items-center gap-1.5 px-4 py-2 rounded-full border transition-colors ${
+              backfilling
+                ? 'text-gray-500 border-white/5 cursor-not-allowed'
+                : 'text-gray-300 hover:text-white border-white/10 hover:bg-white/5'
+            }`}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-[#00F2FE] ${backfilling ? 'animate-spin' : ''}`} />
+            {backfilling ? 'Fixing Shipping IDs…' : 'Fix Shipping IDs'}
+          </button>
           <a href="/" target="_blank" rel="noreferrer" className="text-xs font-bold text-gray-300 hover:text-white flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/10 hover:bg-white/5">
             <Eye className="w-3.5 h-3.5 text-[#00F2FE]" /> View Store
           </a>

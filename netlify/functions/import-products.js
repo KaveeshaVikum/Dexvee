@@ -118,7 +118,6 @@ export const handler = async (event) => {
     const variants = await getCjProductVariants(productId, accessToken);
 
     // productNameEn is the clean, single-string English name.
-    // (productName is a stringified array of every language variant — not usable directly.)
     const productName = productDetails.productNameEn || 'Unnamed Product';
 
     // productImageSet is the real array of photos; bigImage is a single cover shot.
@@ -126,8 +125,7 @@ export const handler = async (event) => {
     const imageUrl = productDetails.bigImage || allImages[0] || '';
 
     // This product has multiple variants (color/size), each with its own price.
-    // We use the first variant as the representative cost price for this listing —
-    // fine for a simple importer, but worth knowing if you later want per-variant selling.
+    // We use the first variant as the representative cost price for this listing.
     const firstVariant = variants[0];
     const costPrice = parseFloat(firstVariant.variantSellPrice);
 
@@ -135,7 +133,11 @@ export const handler = async (event) => {
       throw new Error('Could not read a valid price from CJ variant data.');
     }
 
-    // Apply the 40% Markup Rule & 50/50 Partner Payout Split
+    // Shipping is NOT baked into the item price here — it's calculated
+    // separately and live at checkout (see calculate-shipping.js), based on
+    // the real cart contents and destination. That's why we still save
+    // `vid` below: it's what that function needs to get a real CJ quote.
+    // Apply the 40% Markup Rule & 50/50 Partner Payout Split on cost price alone.
     const sellingPrice = parseFloat((costPrice * 1.40).toFixed(2));
     const totalProfit = parseFloat((sellingPrice - costPrice).toFixed(2));
     const partnerSplit = parseFloat((totalProfit / 2).toFixed(2));
@@ -144,6 +146,7 @@ export const handler = async (event) => {
 
     const productDocument = {
       cjProductId: productId,
+      vid: firstVariant.vid || null, // needed by calculate-shipping.js for live freight quotes
       name: productName,
       image: imageUrl,
       images: allImages,

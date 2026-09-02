@@ -12,6 +12,8 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
 
   const [activeImage, setActiveImage] = useState(0);
   const [quantity, setQuantity] = useState(1);
+  const [shippingEstimate, setShippingEstimate] = useState(null); // { cost, carrier, etaDays }
+  const [shippingLoading, setShippingLoading] = useState(false);
 
   // Reset gallery/quantity whenever the person navigates to a different product.
   useEffect(() => {
@@ -19,12 +21,54 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
     setQuantity(1);
   }, [id]);
 
+  // Live shipping estimate for this product, straight from CJ Dropshipping's
+  // freight API — recalculates whenever quantity changes.
+  useEffect(() => {
+    if (!product) return;
+
+    let cancelled = false;
+    setShippingLoading(true);
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch('/.netlify/functions/calculate-shipping', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: [{ vid: product.vid, quantity }],
+            destCountryCode: 'LK'
+          })
+        });
+        const data = await res.json();
+        if (cancelled) return;
+
+        if (data.success) {
+          setShippingEstimate({
+            cost: data.shippingCost,
+            carrier: data.breakdown?.carrier || null,
+            etaDays: data.breakdown?.etaDays || null,
+            isLiveQuote: data.isLiveQuote,
+            fallbackReason: data.fallbackReason
+          });
+        } else {
+          setShippingEstimate(null);
+        }
+      } catch (err) {
+        if (!cancelled) setShippingEstimate(null);
+      } finally {
+        if (!cancelled) setShippingLoading(false);
+      }
+    }, 300);
+
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [product, quantity]);
+
   if (!product) {
     return (
       <div className="max-w-3xl mx-auto px-6 py-24 text-center">
         <h2 className="text-2xl font-black text-gray-800 mb-3">Product not found</h2>
         <p className="text-gray-500 mb-6">It may have been removed, or the link is incorrect.</p>
-        <Link to="/" className="inline-flex items-center gap-2 text-[#2D1B4E] font-bold hover:underline">
+        <Link to="/" className="inline-flex items-center gap-2 text-[#1A0F2E] font-bold hover:underline">
           <ArrowLeft className="w-4 h-4" /> Back to shopping
         </Link>
       </div>
@@ -46,7 +90,7 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
-      <Link to="/" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-[#2D1B4E] font-medium mb-6">
+      <Link to="/" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-[#1A0F2E] font-medium mb-6">
         <ArrowLeft className="w-4 h-4" /> Back to shopping
       </Link>
 
@@ -83,7 +127,7 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
                   key={i}
                   onClick={() => setActiveImage(i)}
                   className={`w-16 h-16 shrink-0 rounded-xl overflow-hidden border-2 transition-colors ${
-                    activeImage === i ? 'border-[#2D1B4E]' : 'border-transparent hover:border-gray-200'
+                    activeImage === i ? 'border-[#1A0F2E]' : 'border-transparent hover:border-gray-200'
                   }`}
                 >
                   <img src={img} alt={`${product.name} ${i + 1}`} className="w-full h-full object-cover" />
@@ -95,7 +139,7 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
 
         {/* Product Info */}
         <div className="w-full lg:w-3/5">
-          <div className="text-xs font-bold text-[#2D1B4E] uppercase tracking-widest mb-2">{product.category}</div>
+          <div className="text-xs font-bold text-[#1A0F2E] uppercase tracking-widest mb-2">{product.category}</div>
           <h1 className="text-2xl md:text-3xl font-black text-gray-800 mb-3 leading-snug">{product.name}</h1>
 
           <div className="flex items-center gap-3 text-sm text-gray-500 font-medium mb-5">
@@ -114,17 +158,38 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
           </div>
 
           <div className="flex items-baseline gap-3 mb-1">
-            <span className="text-3xl md:text-4xl font-black text-[#2D1B4E]">{formatLKR(product.price, lkrRate)}</span>
+            <span className="text-3xl md:text-4xl font-black text-[#1A0F2E]">{formatLKR(product.price, lkrRate)}</span>
             {hasDiscount && (
               <span className="text-lg text-gray-400 line-through font-medium">{formatLKR(product.originalPrice, lkrRate)}</span>
             )}
           </div>
           {hasDiscount && (
-            <div className="inline-block bg-[#2D1B4E]/10 text-[#2D1B4E] text-xs font-bold px-2.5 py-1 rounded-lg mb-6">
+            <div className="inline-block bg-[#1A0F2E]/10 text-[#1A0F2E] text-xs font-bold px-2.5 py-1 rounded-lg mb-3">
               -{discountPercent}% OFF
             </div>
           )}
-          {!hasDiscount && <div className="mb-6" />}
+          {!hasDiscount && <div className="mb-3" />}
+
+          {/* Live shipping estimate, straight from CJ's freight API */}
+          <div className="mb-6">
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <Truck className="w-4 h-4 text-[#1A0F2E] shrink-0" />
+              {shippingLoading ? (
+                <span>Calculating shipping…</span>
+              ) : shippingEstimate ? (
+                <span>
+                  {shippingEstimate.isLiveQuote ? "Shipping" : "Estimated shipping"}: <span className="font-bold text-gray-800">{formatLKR(shippingEstimate.cost, lkrRate)}</span>
+                  {shippingEstimate.isLiveQuote && shippingEstimate.carrier && <> via {shippingEstimate.carrier}</>}
+                  {shippingEstimate.isLiveQuote && shippingEstimate.etaDays && <> · {shippingEstimate.etaDays} days</>}
+                </span>
+              ) : (
+                <span>Shipping calculated at checkout</span>
+              )}
+            </div>
+            {shippingEstimate?.fallbackReason && (
+              <p className="text-[11px] text-amber-600 mt-1 ml-6">{shippingEstimate.fallbackReason}</p>
+            )}
+          </div>
 
           <p className="text-gray-500 leading-relaxed mb-6">{product.description}</p>
 
@@ -154,13 +219,13 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
           <div className="flex flex-col sm:flex-row gap-3 mb-8">
             <button
               onClick={() => onAddToCart(product, quantity)}
-              className="flex-1 py-4 border-2 border-[#2D1B4E] text-[#2D1B4E] hover:bg-[#2D1B4E] hover:text-white rounded-2xl text-sm font-black uppercase tracking-wider transition-colors"
+              className="flex-1 py-4 border-2 border-[#1A0F2E] text-[#1A0F2E] hover:bg-[#1A0F2E] hover:text-white rounded-2xl text-sm font-black uppercase tracking-wider transition-colors"
             >
               Add to Cart
             </button>
             <button
               onClick={() => onBuyNow(product, quantity)}
-              className="flex-1 py-4 bg-[#2D1B4E] hover:bg-[#1A0F2E] text-white rounded-2xl text-sm font-black uppercase tracking-wider transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
+              className="flex-1 py-4 bg-[#1A0F2E] hover:bg-[#0D0717] text-white rounded-2xl text-sm font-black uppercase tracking-wider transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
             >
               Buy Now
             </button>
@@ -169,19 +234,19 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
           {/* Delivery / Trust Info — mirrors the Daraz sidebar */}
           <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 space-y-3">
             <div className="flex items-center gap-3 text-sm text-gray-600">
-              <Truck className="w-4.5 h-4.5 text-[#2D1B4E] shrink-0" />
+              <Truck className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />
               <span>Standard delivery, usually within 5–7 business days</span>
             </div>
             <div className="flex items-center gap-3 text-sm text-gray-600">
-              <ShieldCheck className="w-4.5 h-4.5 text-[#2D1B4E] shrink-0" />
+              <ShieldCheck className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />
               <span>14 days easy return</span>
             </div>
             <div className="flex items-center gap-3 text-sm text-gray-600">
-              <Lock className="w-4.5 h-4.5 text-[#2D1B4E] shrink-0" />
+              <Lock className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />
               <span>Cash on Delivery Available</span>
             </div>
             <div className="flex items-center gap-3 text-sm text-gray-600">
-              <PackageCheck className="w-4.5 h-4.5 text-[#2D1B4E] shrink-0" />
+              <PackageCheck className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />
               <span>Sold by {product.supplier}</span>
             </div>
           </div>
