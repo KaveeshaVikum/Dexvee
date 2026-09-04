@@ -207,7 +207,9 @@ export default function App() {
     email: "vikumkaveesha8@gmail.com",
     phone: "078 385 8693",
     address: "Ipalogama",
-    city: "Anuradhapura"
+    city: "Anuradhapura",
+    district: "Anuradhapura",
+    postalCode: ""
   });
   
   const [paymentMethod, setPaymentMethod] = useState("COD");
@@ -314,16 +316,64 @@ export default function App() {
     setCheckoutStep(1); // Reset to first step
   };
 
-  const handlePlaceOrder = () => {
-    setOrderSuccess(true);
-    setTimeout(() => {
-      setOrderSuccess(false);
-      setIsCheckoutOpen(false);
-      setIsCartOpen(false);
-      setCheckoutStep(1);
-      setCart([]);
-      showToast("Order placed successfully!");
-    }, 3000);
+  const [placingOrder, setPlacingOrder] = useState(false);
+
+  const handlePlaceOrder = async () => {
+    setPlacingOrder(true);
+    try {
+      const res = await fetch('/.netlify/functions/place-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: cart.map((item) => ({
+            id: item.id,
+            name: item.name,
+            image: item.image,
+            vid: item.vid || null,
+            quantity: item.quantity,
+            price: item.price
+          })),
+          shippingDetails,
+          paymentMethod,
+          subtotal,
+          shippingCost,
+          grandTotal,
+          // Reuse the exact carrier already quoted at checkout — CJ's order
+          // API requires a logisticName, and it needs to match a route CJ
+          // actually offers, not a guess.
+          shippingCarrier: shippingInfo?.isLiveQuote ? shippingInfo.carrier : null
+        })
+      });
+      const data = await res.json();
+
+      if (!data.success) {
+        showToast(data.error || "Couldn't place order — please try again.");
+        setPlacingOrder(false);
+        return;
+      }
+
+      setPlacingOrder(false);
+      setOrderSuccess(true);
+      setTimeout(() => {
+        setOrderSuccess(false);
+        setIsCheckoutOpen(false);
+        setIsCartOpen(false);
+        setCheckoutStep(1);
+        setCart([]);
+
+        if (data.cjOrderStatus === 'created') {
+          showToast("Order placed! Automatically forwarded to our supplier for approval.");
+        } else if (paymentMethod === 'CARD' && data.cjOrderStatus !== 'not_applicable') {
+          showToast("Order placed — we'll process supplier fulfillment manually for this one.");
+        } else {
+          showToast("Order placed successfully!");
+        }
+      }, 3000);
+    } catch (err) {
+      console.error('Place order error:', err);
+      showToast("Network error — order may not have gone through. Please try again.");
+      setPlacingOrder(false);
+    }
   };
 
   const proceedCheckout = () => {
@@ -808,6 +858,14 @@ export default function App() {
                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">City</label>
                                 <input type="text" value={shippingDetails.city} onChange={e => setShippingDetails({...shippingDetails, city: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-cyan-400 transition-colors" />
                               </div>
+                              <div className="col-span-2 sm:col-span-1">
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">District</label>
+                                <input type="text" value={shippingDetails.district} onChange={e => setShippingDetails({...shippingDetails, district: e.target.value})} placeholder="e.g. Colombo" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-cyan-400 transition-colors" />
+                              </div>
+                              <div className="col-span-2 sm:col-span-1">
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">Postal Code</label>
+                                <input type="text" value={shippingDetails.postalCode} onChange={e => setShippingDetails({...shippingDetails, postalCode: e.target.value})} placeholder="e.g. 10100" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-cyan-400 transition-colors" />
+                              </div>
                               <div className="col-span-2">
                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">Street Address</label>
                                 <input type="text" value={shippingDetails.address} onChange={e => setShippingDetails({...shippingDetails, address: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-cyan-400 transition-colors" />
@@ -979,17 +1037,17 @@ export default function App() {
 
                     <button 
                       onClick={proceedCheckout} 
-                      disabled={isEditingAddress && checkoutStep === 1}
+                      disabled={(isEditingAddress && checkoutStep === 1) || placingOrder}
                       className={`w-full py-4 rounded-2xl font-black text-sm tracking-widest uppercase transition-all shadow-lg flex items-center justify-center gap-2 ${
-                        isEditingAddress && checkoutStep === 1 
+                        (isEditingAddress && checkoutStep === 1) || placingOrder
                         ? 'bg-gray-200 text-gray-400 cursor-not-allowed' 
                         : 'bg-[#1A0F2E] hover:bg-[#0D0717] text-white hover:-translate-y-1 hover:shadow-cyan-500/20'
                       }`}
                     >
                       {checkoutStep === 1 && "Proceed to Payment"}
                       {checkoutStep === 2 && "Review Order"}
-                      {checkoutStep === 3 && "Place Order"}
-                      <ChevronRight className="w-4 h-4" />
+                      {checkoutStep === 3 && (placingOrder ? "Placing Order…" : "Place Order")}
+                      {!placingOrder && <ChevronRight className="w-4 h-4" />}
                     </button>
                     
                     {checkoutStep > 1 && (
