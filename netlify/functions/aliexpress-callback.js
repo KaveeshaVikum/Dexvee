@@ -1,4 +1,4 @@
-import { AESystemClient } from 'ae_sdk';
+import { DropshipperClient } from 'ae_sdk';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
@@ -44,7 +44,7 @@ export const handler = async (event) => {
   }
 
   try {
-    const systemClient = new AESystemClient({ app_key: appKey, app_secret: appSecret, session: '' });
+    const systemClient = new DropshipperClient({ app_key: appKey, app_secret: appSecret, session: '' });
     const tokenResponse = await systemClient.generateToken({ code });
 
     console.log('AliExpress generateToken response:', JSON.stringify(tokenResponse));
