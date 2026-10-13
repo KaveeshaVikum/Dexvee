@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Lock, Key, Zap, PackagePlus, Link as LinkIcon, Download, 
   Trash2, Plus, LogOut, LayoutDashboard, FileJson, AlertCircle, 
-  RefreshCw, Eye, DollarSign, Users, TrendingUp 
+  RefreshCw, Eye, DollarSign, Users, TrendingUp, Check, X, Banknote 
 } from 'lucide-react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
@@ -212,6 +212,72 @@ export default function AdminDashboard() {
       showStatus('error', 'Network error connecting to Netlify function.');
     } finally {
       setBackfilling(false);
+    }
+  };
+
+  // --- Bank transfer payments waiting for review ---
+  // Orders hold customers' personal details, so the browser can't read them
+  // from Firestore directly; these go through passcode-protected functions.
+  const [pendingPayments, setPendingPayments] = useState([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [reviewingId, setReviewingId] = useState(null);
+  const [zoomedReceipt, setZoomedReceipt] = useState(null);
+
+  const loadPendingPayments = async () => {
+    setPendingLoading(true);
+    try {
+      const res = await fetch('/.netlify/functions/get-pending-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: password })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setPendingPayments(data.orders);
+      } else {
+        showStatus('error', data.error || 'Could not load pending payments.');
+      }
+    } catch (err) {
+      showStatus('error', 'Network error loading pending payments.');
+    } finally {
+      setPendingLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated) loadPendingPayments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
+  const handleReviewPayment = async (orderId, action) => {
+    const verb = action === 'approve' ? 'approve' : 'reject';
+    if (!window.confirm(`Are you sure you want to ${verb} this payment?`)) return;
+
+    setReviewingId(orderId);
+    try {
+      const res = await fetch('/.netlify/functions/review-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, action, passcode: password })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (action === 'approve') {
+          const msg = data.cjOrderStatus === 'created'
+            ? 'Payment approved and the order was sent to CJ (unpaid in MyCJ — pay it there).'
+            : `Payment approved, but CJ forwarding: ${data.cjOrderStatus}${data.cjError ? ' — ' + data.cjError : ''}. Place this one with CJ manually.`;
+          showStatus('success', msg);
+        } else {
+          showStatus('success', 'Payment rejected.');
+        }
+        setPendingPayments((prev) => prev.filter((o) => o.id !== orderId));
+      } else {
+        showStatus('error', data.error || 'Review failed.');
+      }
+    } catch (err) {
+      showStatus('error', 'Network error while reviewing payment.');
+    } finally {
+      setReviewingId(null);
     }
   };
 
@@ -432,6 +498,62 @@ export default function AdminDashboard() {
 
           </div>
         </div>
+
+        <div className="mt-8 bg-[#0B0F19] border border-white/10 rounded-3xl p-6">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-lg font-black uppercase flex items-center gap-2">
+              <Banknote className="w-5 h-5 text-[#00F2FE]" /> Bank Transfer Payments to Verify
+              {pendingPayments.length > 0 && (
+                <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full px-2 py-0.5">{pendingPayments.length} pending</span>
+              )}
+            </h2>
+            <button onClick={loadPendingPayments} disabled={pendingLoading} className="text-xs font-bold text-gray-300 hover:text-white flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-white/10 hover:bg-white/5">
+              <RefreshCw className={`w-3.5 h-3.5 ${pendingLoading ? 'animate-spin' : ''}`} /> Refresh
+            </button>
+          </div>
+          <p className="text-xs text-gray-400 mb-5">Check each receipt against your bank account before approving. Approving sends the order to CJ (created unpaid — you still pay it in MyCJ). Oldest first.</p>
+
+          {pendingPayments.length === 0 ? (
+            <p className="text-xs text-gray-500 py-6 text-center">{pendingLoading ? 'Loading…' : 'No payments waiting for review.'}</p>
+          ) : (
+            <div className="space-y-4">
+              {pendingPayments.map((o) => {
+                const ageDays = o.createdAtMs ? Math.floor((Date.now() - o.createdAtMs) / 86400000) : 0;
+                return (
+                  <div key={o.id} className="flex flex-col md:flex-row gap-4 p-4 rounded-2xl bg-white/5 border border-white/10">
+                    {o.receiptImage ? (
+                      <img src={o.receiptImage} alt="Payment receipt" onClick={() => setZoomedReceipt(o.receiptImage)} className="w-full md:w-40 h-40 object-cover rounded-xl cursor-zoom-in border border-white/10" />
+                    ) : (
+                      <div className="w-full md:w-40 h-40 rounded-xl border border-dashed border-white/20 flex items-center justify-center text-xs text-gray-500">No receipt found</div>
+                    )}
+                    <div className="flex-1 text-xs space-y-1">
+                      <p className="font-black text-sm text-white">{o.shippingDetails?.name} <span className="text-gray-400 font-normal">· {o.shippingDetails?.phone}</span></p>
+                      <p className="text-gray-400">{o.shippingDetails?.address}, {o.shippingDetails?.city}</p>
+                      <p className="text-gray-400">{(o.items || []).map((i) => `${i.name} ×${i.quantity}`).join(', ')}</p>
+                      <p className="pt-1">Expected transfer: <span className="font-black text-[#00F2FE]">{o.grandTotalLkr ? `Rs. ${Number(o.grandTotalLkr).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : formatLKR(o.grandTotal, lkrRate)}</span></p>
+                      <p className={ageDays >= 2 ? 'text-amber-400 font-bold' : 'text-gray-500'}>Placed {ageDays === 0 ? 'today' : `${ageDays} day${ageDays > 1 ? 's' : ''} ago`}{ageDays >= 2 ? ' — nearing your 3-day promise' : ''}</p>
+                      <p className="text-gray-600 font-mono">Order {o.id}</p>
+                    </div>
+                    <div className="flex md:flex-col gap-2 md:justify-center">
+                      <button onClick={() => handleReviewPayment(o.id, 'approve')} disabled={reviewingId === o.id} className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 text-xs font-bold disabled:opacity-50">
+                        <Check className="w-3.5 h-3.5" /> Approve
+                      </button>
+                      <button onClick={() => handleReviewPayment(o.id, 'reject')} disabled={reviewingId === o.id} className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-full bg-red-500/10 text-red-300 border border-red-500/30 hover:bg-red-500/20 text-xs font-bold disabled:opacity-50">
+                        <X className="w-3.5 h-3.5" /> Reject
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {zoomedReceipt && (
+          <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6" onClick={() => setZoomedReceipt(null)}>
+            <img src={zoomedReceipt} alt="Receipt" className="max-h-full max-w-full rounded-xl" />
+          </div>
+        )}
       </main>
     </div>
   );

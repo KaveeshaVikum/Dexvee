@@ -213,6 +213,55 @@ export default function App() {
   });
   
   const [paymentMethod, setPaymentMethod] = useState("COD");
+  const [receiptFile, setReceiptFile] = useState(null); // { base64, previewUrl, name }
+  const [receiptError, setReceiptError] = useState("");
+
+  // Shrinks the chosen image to a small JPEG in the browser before it's sent,
+  // so even a big phone photo ends up a few hundred KB.
+  const handleReceiptSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setReceiptError("");
+
+    if (!file.type.startsWith('image/')) {
+      setReceiptError("Please upload an image file (screenshot or photo of your receipt).");
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      setReceiptError("That file is too large — please choose a smaller screenshot or photo.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onerror = () => setReceiptError("Couldn't read that file. Please try another image.");
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => setReceiptError("Couldn't open that image. Please try another one.");
+      img.onload = () => {
+        const maxSide = 1100;
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        let quality = 0.75;
+        let dataUrl = canvas.toDataURL('image/jpeg', quality);
+        while (dataUrl.length > 800 * 1024 && quality > 0.3) {
+          quality -= 0.1;
+          dataUrl = canvas.toDataURL('image/jpeg', quality);
+        }
+        if (dataUrl.length > 800 * 1024) {
+          setReceiptError("Couldn't shrink that image enough — please upload a smaller screenshot.");
+          return;
+        }
+        setReceiptFile({ base64: dataUrl, previewUrl: dataUrl, name: file.name });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  };
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -319,6 +368,11 @@ export default function App() {
   const [placingOrder, setPlacingOrder] = useState(false);
 
   const handlePlaceOrder = async () => {
+    if (paymentMethod === 'BANK_TRANSFER' && !receiptFile) {
+      setReceiptError("Please upload your payment receipt before placing the order.");
+      return;
+    }
+
     setPlacingOrder(true);
     try {
       const res = await fetch('/.netlify/functions/place-order', {
@@ -338,10 +392,13 @@ export default function App() {
           subtotal,
           shippingCost,
           grandTotal,
+          grandTotalLkr: Math.round(grandTotal * lkrRate * 100) / 100, // what the customer was actually shown
+          lkrRate,
           // Reuse the exact carrier already quoted at checkout — CJ's order
           // API requires a logisticName, and it needs to match a route CJ
           // actually offers, not a guess.
-          shippingCarrier: shippingInfo?.isLiveQuote ? shippingInfo.carrier : null
+          shippingCarrier: shippingInfo?.isLiveQuote ? shippingInfo.carrier : null,
+          receiptImageBase64: paymentMethod === 'BANK_TRANSFER' ? receiptFile?.base64 : undefined
         })
       });
       const data = await res.json();
@@ -360,8 +417,11 @@ export default function App() {
         setIsCartOpen(false);
         setCheckoutStep(1);
         setCart([]);
+        setReceiptFile(null);
 
-        if (data.cjOrderStatus === 'created') {
+        if (data.paymentStatus === 'pending_verification') {
+          showToast("Order placed! We'll verify your payment within 3 business days.");
+        } else if (data.cjOrderStatus === 'created') {
           showToast("Order placed! Automatically forwarded to our supplier for approval.");
         } else if (paymentMethod === 'CARD' && data.cjOrderStatus !== 'not_applicable') {
           showToast("Order placed — we'll process supplier fulfillment manually for this one.");
@@ -949,6 +1009,58 @@ export default function App() {
                           <div className={`w-6 h-6 rounded-full border-4 ${paymentMethod === 'CARD' ? 'border-fuchsia-500 bg-white' : 'border-gray-300'}`}></div>
                           <input type="radio" name="payment" className="hidden" checked={paymentMethod === 'CARD'} onChange={() => setPaymentMethod('CARD')} />
                         </label>
+
+                        <label className={`flex items-center justify-between p-5 border-2 rounded-2xl cursor-pointer transition-all ${paymentMethod === 'BANK_TRANSFER' ? 'border-fuchsia-500 bg-fuchsia-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
+                          <div className="flex items-center gap-4">
+                            <div className={`p-2 rounded-xl ${paymentMethod === 'BANK_TRANSFER' ? 'bg-fuchsia-100 text-fuchsia-600' : 'bg-gray-100 text-gray-400'}`}><Banknote className="w-6 h-6" /></div>
+                            <div>
+                              <span className="font-bold text-gray-800 block">Online Bank Transfer</span>
+                              <span className="text-xs text-gray-500 font-medium">Pay by bank transfer, upload your receipt</span>
+                            </div>
+                          </div>
+                          <div className={`w-6 h-6 rounded-full border-4 ${paymentMethod === 'BANK_TRANSFER' ? 'border-fuchsia-500 bg-white' : 'border-gray-300'}`}></div>
+                          <input type="radio" name="payment" className="hidden" checked={paymentMethod === 'BANK_TRANSFER'} onChange={() => setPaymentMethod('BANK_TRANSFER')} />
+                        </label>
+
+                        {paymentMethod === 'BANK_TRANSFER' && (
+                          <div className="p-5 bg-gray-50 border-2 border-gray-100 rounded-2xl space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                            <div>
+                              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Transfer to this account</p>
+                              <p className="text-sm mb-3"><span className="text-gray-500">Amount to transfer:</span> <span className="font-black text-gray-900">{formatLKR(grandTotal, lkrRate)}</span></p>
+                              <div className="bg-white border border-gray-200 rounded-xl p-4 text-sm space-y-1">
+                                <p><span className="text-gray-400">Bank:</span> <span className="font-bold text-gray-800">[Your Bank Name]</span></p>
+                                <p><span className="text-gray-400">Account Name:</span> <span className="font-bold text-gray-800">[Your Account Name]</span></p>
+                                <p><span className="text-gray-400">Account Number:</span> <span className="font-bold text-gray-800">[Your Account Number]</span></p>
+                                <p><span className="text-gray-400">Branch:</span> <span className="font-bold text-gray-800">[Your Branch]</span></p>
+                              </div>
+                            </div>
+
+                            <div>
+                              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Upload your payment receipt</p>
+                              <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl p-6 cursor-pointer hover:border-fuchsia-400 hover:bg-fuchsia-50/30 transition-colors">
+                                {receiptFile ? (
+                                  <img src={receiptFile.previewUrl} alt="Receipt preview" className="max-h-40 rounded-lg object-contain" />
+                                ) : (
+                                  <>
+                                    <Package className="w-6 h-6 text-gray-400" />
+                                    <span className="text-xs text-gray-500 font-medium">Tap to upload a screenshot or photo</span>
+                                  </>
+                                )}
+                                <input type="file" accept="image/*" className="hidden" onChange={handleReceiptSelect} />
+                              </label>
+                              {receiptFile && (
+                                <button type="button" onClick={() => setReceiptFile(null)} className="text-xs text-red-500 font-bold mt-2 hover:underline">
+                                  Remove and choose a different photo
+                                </button>
+                              )}
+                              {receiptError && <p className="text-xs text-red-500 font-bold mt-2">{receiptError}</p>}
+                            </div>
+
+                            <p className="text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                              We manually verify bank transfers within <span className="font-bold">3 business days</span>. Your order will be processed once we confirm your payment.
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1037,9 +1149,9 @@ export default function App() {
 
                     <button 
                       onClick={proceedCheckout} 
-                      disabled={(isEditingAddress && checkoutStep === 1) || placingOrder}
+                      disabled={(isEditingAddress && checkoutStep === 1) || placingOrder || (checkoutStep >= 2 && paymentMethod === 'BANK_TRANSFER' && !receiptFile)}
                       className={`w-full py-4 rounded-2xl font-black text-sm tracking-widest uppercase transition-all shadow-lg flex items-center justify-center gap-2 ${
-                        (isEditingAddress && checkoutStep === 1) || placingOrder
+                        (isEditingAddress && checkoutStep === 1) || placingOrder || (checkoutStep >= 2 && paymentMethod === 'BANK_TRANSFER' && !receiptFile)
                         ? 'bg-gray-200 text-gray-400 cursor-not-allowed' 
                         : 'bg-[#1A0F2E] hover:bg-[#0D0717] text-white hover:-translate-y-1 hover:shadow-cyan-500/20'
                       }`}
