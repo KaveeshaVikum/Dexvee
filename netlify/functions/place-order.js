@@ -144,6 +144,12 @@ export const handler = async (event) => {
     if (!shippingDetails?.name || !shippingDetails?.phone || !shippingDetails?.address) {
       throw new Error('Shipping details are incomplete.');
     }
+    // Bank transfer is the only payment method currently offered. COD and card
+    // are blocked here too, not just hidden in the UI, since anyone can call
+    // this function directly.
+    if (paymentMethod !== 'BANK_TRANSFER') {
+      throw new Error('Only bank transfer payments are accepted right now.');
+    }
     if (paymentMethod === 'BANK_TRANSFER' && !receiptImageBase64) {
       throw new Error('A payment receipt is required for bank transfer orders.');
     }

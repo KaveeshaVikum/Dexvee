@@ -212,7 +212,7 @@ export default function App() {
     postalCode: ""
   });
   
-  const [paymentMethod, setPaymentMethod] = useState("COD");
+  const [paymentMethod, setPaymentMethod] = useState("BANK_TRANSFER");
   const [receiptFile, setReceiptFile] = useState(null); // { base64, previewUrl, name }
   const [receiptError, setReceiptError] = useState("");
 
@@ -423,8 +423,6 @@ export default function App() {
           showToast("Order placed! We'll verify your payment within 3 business days.");
         } else if (data.cjOrderStatus === 'created') {
           showToast("Order placed! Automatically forwarded to our supplier for approval.");
-        } else if (paymentMethod === 'CARD' && data.cjOrderStatus !== 'not_applicable') {
-          showToast("Order placed — we'll process supplier fulfillment manually for this one.");
         } else {
           showToast("Order placed successfully!");
         }
@@ -986,29 +984,17 @@ export default function App() {
                         <Banknote className="w-5 h-5 text-fuchsia-500" /> Select Payment Method
                       </h3>
                       <div className="space-y-3">
-                        <label className={`flex items-center justify-between p-5 border-2 rounded-2xl cursor-pointer transition-all ${paymentMethod === 'COD' ? 'border-fuchsia-500 bg-fuchsia-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
+                        {/* Card payments: not available yet — shown disabled so customers know it's planned */}
+                        <div className="flex items-center justify-between p-5 border-2 border-gray-100 rounded-2xl bg-gray-50 opacity-60 cursor-not-allowed select-none" aria-disabled="true">
                           <div className="flex items-center gap-4">
-                            <div className={`p-2 rounded-xl ${paymentMethod === 'COD' ? 'bg-fuchsia-100 text-fuchsia-600' : 'bg-gray-100 text-gray-400'}`}><Banknote className="w-6 h-6" /></div>
+                            <div className="p-2 rounded-xl bg-gray-100 text-gray-400"><CreditCard className="w-6 h-6" /></div>
                             <div>
-                              <span className="font-bold text-gray-800 block">Cash on Delivery</span>
-                              <span className="text-xs text-gray-500 font-medium">Pay securely when your package arrives</span>
+                              <span className="font-bold text-gray-500 block">Credit/Debit Card</span>
+                              <span className="text-xs text-gray-400 font-medium">Visa, MasterCard, Amex</span>
                             </div>
                           </div>
-                          <div className={`w-6 h-6 rounded-full border-4 ${paymentMethod === 'COD' ? 'border-fuchsia-500 bg-white' : 'border-gray-300'}`}></div>
-                          <input type="radio" name="payment" className="hidden" checked={paymentMethod === 'COD'} onChange={() => setPaymentMethod('COD')} />
-                        </label>
-                        
-                        <label className={`flex items-center justify-between p-5 border-2 rounded-2xl cursor-pointer transition-all ${paymentMethod === 'CARD' ? 'border-fuchsia-500 bg-fuchsia-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
-                          <div className="flex items-center gap-4">
-                            <div className={`p-2 rounded-xl ${paymentMethod === 'CARD' ? 'bg-fuchsia-100 text-fuchsia-600' : 'bg-gray-100 text-gray-400'}`}><CreditCard className="w-6 h-6" /></div>
-                            <div>
-                              <span className="font-bold text-gray-800 block">Credit/Debit Card</span>
-                              <span className="text-xs text-gray-500 font-medium">Visa, MasterCard, Amex</span>
-                            </div>
-                          </div>
-                          <div className={`w-6 h-6 rounded-full border-4 ${paymentMethod === 'CARD' ? 'border-fuchsia-500 bg-white' : 'border-gray-300'}`}></div>
-                          <input type="radio" name="payment" className="hidden" checked={paymentMethod === 'CARD'} onChange={() => setPaymentMethod('CARD')} />
-                        </label>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-fuchsia-600 bg-fuchsia-100 px-3 py-1.5 rounded-full">Coming Soon</span>
+                        </div>
 
                         <label className={`flex items-center justify-between p-5 border-2 rounded-2xl cursor-pointer transition-all ${paymentMethod === 'BANK_TRANSFER' ? 'border-fuchsia-500 bg-fuchsia-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
                           <div className="flex items-center gap-4">
