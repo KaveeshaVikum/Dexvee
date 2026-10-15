@@ -1,141 +1,213 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { 
-  User, Package, MapPin, Heart, Settings, LogOut, 
-  Camera, CheckCircle2, Truck, Bell, Shield,
-  ChevronRight, Edit3, Trash2, ExternalLink
+import React, { useState, useEffect } from 'react';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
+import {
+  User, Package, MapPin, Shield, LogOut, ChevronRight, ExternalLink,
+  CheckCircle2, Clock, XCircle
 } from 'lucide-react';
+import {
+  signOut, updateProfile, EmailAuthProvider,
+  reauthenticateWithCredential, updatePassword
+} from 'firebase/auth';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { auth, db } from './firebase';
+import { formatLKR } from './utils/currency';
 
-export default function AccountPage({ darkMode, setDarkMode }) {
+const TABS = [
+  { id: 'profile', label: 'My Profile', icon: User },
+  { id: 'orders', label: 'Order History', icon: Package },
+  { id: 'address', label: 'Last Address', icon: MapPin },
+  { id: 'security', label: 'Security', icon: Shield },
+];
+
+// What the customer sees. Deliberately says nothing about suppliers.
+function getOrderStatus(order) {
+  if (order.paymentStatus === 'pending_verification') {
+    return { label: 'Awaiting payment check', tone: 'amber', icon: Clock, note: 'We verify bank transfers within 3 business days.' };
+  }
+  if (order.paymentStatus === 'rejected') {
+    return { label: 'Payment not verified', tone: 'red', icon: XCircle, note: 'We couldn\'t match your transfer. Please contact us so we can sort it out.' };
+  }
+  return { label: 'Payment confirmed', tone: 'emerald', icon: CheckCircle2, note: 'Your order is being prepared. International delivery can take a few weeks.' };
+}
+
+const TONES = {
+  amber: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
+  red: 'bg-red-500/10 text-red-500 border-red-500/20',
+  emerald: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
+};
+
+export default function AccountPage({ darkMode, user, authReady, lkrRate, onProfileUpdated }) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('profile');
 
-  // Personal Mock Data
-  const [profileData, setProfileData] = useState({
-    firstName: "Kaveesha",
-    lastName: "",
-    email: "vikumkaveesha8@gmail.com",
-    phone: "+94 77 123 4567",
-    bio: "Frontend Developer & UI/UX Designer"
-  });
+  const [orders, setOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [ordersError, setOrdersError] = useState('');
 
-  const MOCK_ORDERS = [
-    {
-      id: "DXV-98231",
-      date: "Aug 02, 2026",
-      status: "In Transit",
-      total: 99.49,
-      trackingNumber: "CJ883920114SL",
-      items: [
-        { name: "Minimalist Smart Watch V2 AMOLED", qty: 1, price: 64.50, image: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200&q=80" },
-        { name: "AeroPulse Wireless Earbuds ANC Pro", qty: 1, price: 34.99, image: "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=200&q=80" }
-      ]
-    },
-    {
-      id: "DXV-77120",
-      date: "Jul 15, 2026",
-      status: "Delivered",
-      total: 89.90,
-      trackingNumber: "CJ883910002SL",
-      items: [
-        { name: "Cyberpunk RGB Mechanical Keyboard", qty: 1, price: 89.90, image: "https://images.unsplash.com/photo-1587829741301-dc798b83add3?w=200&q=80" }
-      ]
+  const [displayName, setDisplayName] = useState('');
+  const [profileMsg, setProfileMsg] = useState({ type: '', text: '' });
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  const [pw, setPw] = useState({ current: '', next: '', confirm: '' });
+  const [pwMsg, setPwMsg] = useState({ type: '', text: '' });
+  const [savingPw, setSavingPw] = useState(false);
+
+  useEffect(() => {
+    setDisplayName(user?.displayName || '');
+  }, [user]);
+
+  // Live-updates, so a status change (e.g. payment approved) shows up
+  // without the customer refreshing. Firestore rules only let a signed-in
+  // customer read orders where userId is their own uid.
+  useEffect(() => {
+    if (!user) return undefined;
+    setOrdersLoading(true);
+    const q = query(collection(db, 'orders'), where('userId', '==', user.uid));
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+        setOrders(list);
+        setOrdersError('');
+        setOrdersLoading(false);
+      },
+      (err) => {
+        console.error('Orders listener error:', err);
+        setOrdersError('We couldn\'t load your orders right now. Please try again later.');
+        setOrdersLoading(false);
+      }
+    );
+    return unsubscribe;
+  }, [user]);
+
+  if (!authReady) {
+    return <div className="min-h-[60vh] flex items-center justify-center text-sm font-bold text-gray-400">Loading your account…</div>;
+  }
+  if (!user) {
+    return <Navigate to="/auth" replace />;
+  }
+
+  const isPasswordUser = user.providerData.some((p) => p.providerId === 'password');
+  const signInMethods = user.providerData
+    .map((p) => (p.providerId === 'google.com' ? 'Google' : p.providerId === 'facebook.com' ? 'Facebook' : p.providerId === 'password' ? 'Email & password' : p.providerId))
+    .join(', ');
+  const initial = (user.displayName || user.email || '?').charAt(0).toUpperCase();
+  const lastOrder = orders[0];
+
+  const handleSignOut = async () => {
+    await signOut(auth);
+    navigate('/');
+  };
+
+  const handleSaveProfile = async (e) => {
+    e.preventDefault();
+    setProfileMsg({ type: '', text: '' });
+    if (!displayName.trim()) {
+      setProfileMsg({ type: 'error', text: 'Please enter your name.' });
+      return;
     }
-  ];
+    setSavingProfile(true);
+    try {
+      await updateProfile(auth.currentUser, { displayName: displayName.trim() });
+      onProfileUpdated?.();
+      setProfileMsg({ type: 'success', text: 'Profile updated.' });
+    } catch (err) {
+      console.error('Profile update error:', err);
+      setProfileMsg({ type: 'error', text: 'Couldn\'t save your changes. Please try again.' });
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
-  const MOCK_WISHLIST = [
-    { id: 1, name: "Precision Ergonomic Wireless Mouse", price: 24.99, image: "https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=200&q=80", inStock: true },
-    { id: 2, name: "Ultra-Fast 65W GaN Wall Charger", price: 18.50, image: "https://images.unsplash.com/photo-1583863788434-e58a36330cf0?w=200&q=80", inStock: true }
-  ];
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setPwMsg({ type: '', text: '' });
+    if (pw.next.length < 8) {
+      setPwMsg({ type: 'error', text: 'New password must be at least 8 characters.' });
+      return;
+    }
+    if (pw.next !== pw.confirm) {
+      setPwMsg({ type: 'error', text: 'New passwords do not match.' });
+      return;
+    }
+    setSavingPw(true);
+    try {
+      // Firebase makes you prove it's really you before changing a password.
+      const credential = EmailAuthProvider.credential(user.email, pw.current);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      await updatePassword(auth.currentUser, pw.next);
+      setPw({ current: '', next: '', confirm: '' });
+      setPwMsg({ type: 'success', text: 'Password updated.' });
+    } catch (err) {
+      console.error('Password change error:', err);
+      const wrong = err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password';
+      setPwMsg({ type: 'error', text: wrong ? 'Your current password is incorrect.' : 'Couldn\'t update your password. Please try again.' });
+    } finally {
+      setSavingPw(false);
+    }
+  };
 
-  const TABS = [
-    { id: 'profile', label: 'My Profile', icon: User },
-    { id: 'orders', label: 'Order History', icon: Package },
-    { id: 'addresses', label: 'Saved Addresses', icon: MapPin },
-    { id: 'wishlist', label: 'Wishlist', icon: Heart },
-    { id: 'settings', label: 'Account Settings', icon: Settings },
-  ];
+  const muted = darkMode ? 'text-gray-400' : 'text-slate-500';
+  const card = darkMode ? 'bg-[#0B0F19] border-white/10 shadow-2xl' : 'bg-white border-slate-200 shadow-sm';
+  const inputCls = darkMode
+    ? 'bg-[#070A0F] border-white/10 focus:border-[#1A0F2E] text-white'
+    : 'bg-slate-50 border-slate-300 focus:border-[#1A0F2E] focus:ring-4 focus:ring-[#1A0F2E]/10 text-slate-900';
+  const labelCls = `text-[10px] font-black uppercase tracking-wider block mb-2 ${muted}`;
+  const msgCls = (t) => (t === 'success' ? 'text-emerald-600' : 'text-red-500');
 
   return (
-    <div className={`min-h-screen pt-8 pb-24 transition-colors duration-500 ${
-      darkMode ? 'bg-[#070A0F] text-slate-100' : 'bg-[#F5F5F5] text-slate-900'
-    }`}>
+    <div className={`min-h-screen pt-8 pb-24 transition-colors duration-500 ${darkMode ? 'bg-[#070A0F] text-slate-100' : 'bg-[#F5F5F5] text-slate-900'}`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
-        
-        {/* Page Header */}
+
         <div className="mb-8 flex items-center justify-between">
           <div>
             <h1 className={`text-3xl font-black uppercase tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
-              Account <span className="text-[#2D1B4E]">Dashboard</span>
+              My <span className="text-[#1A0F2E]">Account</span>
             </h1>
-            <p className={`text-sm mt-1 font-medium ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>
-              Manage your orders, profile details, and security.
-            </p>
+            <p className={`text-sm mt-1 font-medium ${muted}`}>Your orders, profile and security.</p>
           </div>
-          <Link to="/" className={`hidden sm:flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider border transition-all ${
-            darkMode 
-              ? 'bg-white/5 border-white/10 hover:bg-white/10 text-white' 
-              : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-800'
-          }`}>
+          <Link to="/" className={`hidden sm:flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider border transition-all ${darkMode ? 'bg-white/5 border-white/10 hover:bg-white/10 text-white' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-800'}`}>
             Back to Store <ExternalLink className="w-4 h-4" />
           </Link>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          
-          {/* Sidebar Navigation */}
+
           <aside className="lg:col-span-3">
-            <div className={`rounded-3xl p-6 border sticky top-24 ${
-              darkMode ? 'bg-[#0B0F19] border-white/10 shadow-[0_0_40px_rgba(45,27,78,0.05)]' : 'bg-white border-slate-200 shadow-sm'
-            }`}>
-              
-              {/* User Mini Profile */}
-              <div className="flex flex-col items-center mb-8 pb-8 border-b border-white/10">
-                <div className="relative mb-4 group cursor-pointer">
-                  <div className={`w-24 h-24 rounded-full flex items-center justify-center text-3xl font-black border-2 overflow-hidden transition-all ${
-                    darkMode 
-                      ? 'bg-gradient-to-br from-[#111827] to-[#070A0F] text-[#2D1B4E] border-[#2D1B4E]/30 shadow-[0_0_20px_rgba(45,27,78,0.2)]' 
-                      : 'bg-[#2D1B4E]/10 text-[#2D1B4E] border-[#2D1B4E]/20 shadow-md'
-                  }`}>
-                    {profileData.firstName.charAt(0)}
+            <div className={`rounded-3xl p-6 border lg:sticky lg:top-24 ${card}`}>
+              <div className={`flex flex-col items-center mb-8 pb-8 border-b ${darkMode ? 'border-white/10' : 'border-slate-200'}`}>
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="w-24 h-24 rounded-full object-cover border-2 border-[#1A0F2E]/20 mb-4" />
+                ) : (
+                  <div className="w-24 h-24 rounded-full flex items-center justify-center text-3xl font-black border-2 mb-4 bg-[#1A0F2E]/10 text-[#1A0F2E] border-[#1A0F2E]/20">
+                    {initial}
                   </div>
-                  <div className={`absolute inset-0 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm ${
-                    darkMode ? 'bg-black/60' : 'bg-white/60'
-                  }`}>
-                    <Camera className={`w-6 h-6 ${darkMode ? 'text-white' : 'text-slate-900'}`} />
-                  </div>
-                </div>
-                <h2 className="text-lg font-black">{profileData.firstName} {profileData.lastName}</h2>
-                <p className={`text-xs font-bold ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>{profileData.email}</p>
+                )}
+                <h2 className="text-lg font-black text-center">{user.displayName || 'Dexvee Customer'}</h2>
+                <p className={`text-xs font-bold text-center break-all ${muted}`}>{user.email}</p>
               </div>
 
-              {/* Navigation Links */}
               <nav className="space-y-2">
                 {TABS.map((tab) => {
                   const Icon = tab.icon;
                   const isActive = activeTab === tab.id;
                   return (
-                    <button
-                      key={tab.id}
-                      onClick={() => setActiveTab(tab.id)}
+                    <button key={tab.id} onClick={() => setActiveTab(tab.id)}
                       className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-bold transition-all ${
-                        isActive 
-                          ? 'bg-[#2D1B4E]/10 text-[#2D1B4E] border-l-2 border-[#2D1B4E]' 
+                        isActive
+                          ? 'bg-[#1A0F2E]/10 text-[#1A0F2E] border-l-2 border-[#1A0F2E]'
                           : darkMode
                             ? 'text-gray-400 hover:text-white hover:bg-white/5 border-l-2 border-transparent'
                             : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50 border-l-2 border-transparent'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <Icon className={`w-4 h-4 ${isActive ? 'text-[#2D1B4E]' : 'text-current'}`} />
-                        {tab.label}
-                      </div>
+                      }`}>
+                      <div className="flex items-center gap-3"><Icon className="w-4 h-4" />{tab.label}</div>
                       <ChevronRight className={`w-4 h-4 opacity-50 ${isActive ? 'translate-x-1' : ''} transition-transform`} />
                     </button>
                   );
                 })}
-
                 <div className={`pt-4 mt-4 border-t ${darkMode ? 'border-white/10' : 'border-slate-200'}`}>
-                  <button className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-red-500 hover:bg-red-500/10 transition-colors">
+                  <button onClick={handleSignOut} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-red-500 hover:bg-red-500/10 transition-colors">
                     <LogOut className="w-4 h-4" /> Sign Out
                   </button>
                 </div>
@@ -143,364 +215,165 @@ export default function AccountPage({ darkMode, setDarkMode }) {
             </div>
           </aside>
 
-          {/* Main Content Area */}
           <main className="lg:col-span-9">
-            <div className={`rounded-3xl p-6 sm:p-10 border min-h-[600px] ${
-              darkMode ? 'bg-[#0B0F19] border-white/10 shadow-2xl' : 'bg-white border-slate-200 shadow-sm'
-            }`}>
-              
-              {/* PROFILE TAB */}
+            <div className={`rounded-3xl p-6 sm:p-10 border min-h-[500px] ${card}`}>
+
               {activeTab === 'profile' && (
-                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="mb-8">
-                    <h2 className="text-2xl font-black uppercase mb-2">Personal Information</h2>
-                    <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Update your personal details and public profile.</p>
-                  </div>
+                <div>
+                  <h2 className="text-2xl font-black uppercase mb-2">Personal Information</h2>
+                  <p className={`text-sm mb-8 ${muted}`}>Your name appears on your account. Your email is set by how you signed in.</p>
 
-                  <form className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <label className={`text-[10px] font-black uppercase tracking-wider block mb-2 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>First Name</label>
-                        <input 
-                          type="text" 
-                          value={profileData.firstName}
-                          onChange={(e) => setProfileData({...profileData, firstName: e.target.value})}
-                          className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${
-                            darkMode 
-                              ? 'bg-[#070A0F] border-white/10 focus:border-[#2D1B4E] focus:shadow-[0_0_15px_rgba(45,27,78,0.2)] text-white' 
-                              : 'bg-slate-50 border-slate-300 focus:border-[#2D1B4E] focus:ring-4 focus:ring-[#2D1B4E]/10 text-slate-900'
-                          }`} 
-                        />
-                      </div>
-                      <div>
-                        <label className={`text-[10px] font-black uppercase tracking-wider block mb-2 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Last Name</label>
-                        <input 
-                          type="text" 
-                          value={profileData.lastName}
-                          onChange={(e) => setProfileData({...profileData, lastName: e.target.value})}
-                          placeholder="Optional"
-                          className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${
-                            darkMode 
-                              ? 'bg-[#070A0F] border-white/10 focus:border-[#2D1B4E] focus:shadow-[0_0_15px_rgba(45,27,78,0.2)] text-white' 
-                              : 'bg-slate-50 border-slate-300 focus:border-[#2D1B4E] focus:ring-4 focus:ring-[#2D1B4E]/10 text-slate-900'
-                          }`} 
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <label className={`text-[10px] font-black uppercase tracking-wider block mb-2 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Email Address</label>
-                        <input 
-                          type="email" 
-                          value={profileData.email}
-                          readOnly
-                          className={`w-full px-4 py-3 rounded-xl border text-sm outline-none cursor-not-allowed ${
-                            darkMode ? 'bg-white/5 border-white/5 text-gray-500' : 'bg-slate-100 border-slate-200 text-slate-500'
-                          }`} 
-                        />
-                      </div>
-                      <div>
-                        <label className={`text-[10px] font-black uppercase tracking-wider block mb-2 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Phone Number</label>
-                        <input 
-                          type="tel" 
-                          value={profileData.phone}
-                          onChange={(e) => setProfileData({...profileData, phone: e.target.value})}
-                          className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${
-                            darkMode 
-                              ? 'bg-[#070A0F] border-white/10 focus:border-[#2D1B4E] focus:shadow-[0_0_15px_rgba(45,27,78,0.2)] text-white' 
-                              : 'bg-slate-50 border-slate-300 focus:border-[#2D1B4E] focus:ring-4 focus:ring-[#2D1B4E]/10 text-slate-900'
-                          }`} 
-                        />
-                      </div>
-                    </div>
-
+                  <form onSubmit={handleSaveProfile} className="space-y-6 max-w-xl">
                     <div>
-                      <label className={`text-[10px] font-black uppercase tracking-wider block mb-2 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Bio</label>
-                      <textarea 
-                        rows="4"
-                        value={profileData.bio}
-                        onChange={(e) => setProfileData({...profileData, bio: e.target.value})}
-                        className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all resize-none ${
-                          darkMode 
-                            ? 'bg-[#070A0F] border-white/10 focus:border-[#2D1B4E] focus:shadow-[0_0_15px_rgba(45,27,78,0.2)] text-white' 
-                            : 'bg-slate-50 border-slate-300 focus:border-[#2D1B4E] focus:ring-4 focus:ring-[#2D1B4E]/10 text-slate-900'
-                        }`} 
-                      />
+                      <label className={labelCls}>Full Name</label>
+                      <input type="text" value={displayName} onChange={(e) => { setDisplayName(e.target.value); setProfileMsg({ type: '', text: '' }); }}
+                        className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${inputCls}`} />
                     </div>
-
-                    <div className="pt-6">
-                      <button type="button" className="px-8 py-3.5 bg-[#2D1B4E] hover:bg-[#43285F] text-white rounded-full font-black text-xs uppercase tracking-wider transition-all shadow-md">
-                        Save Changes
-                      </button>
+                    <div>
+                      <label className={labelCls}>Email Address</label>
+                      <input type="email" value={user.email || ''} readOnly
+                        className={`w-full px-4 py-3 rounded-xl border text-sm outline-none cursor-not-allowed ${darkMode ? 'bg-white/5 border-white/5 text-gray-500' : 'bg-slate-100 border-slate-200 text-slate-500'}`} />
                     </div>
+                    <div>
+                      <label className={labelCls}>Signed in with</label>
+                      <p className="text-sm font-bold">{signInMethods || '—'}</p>
+                    </div>
+                    {profileMsg.text && <p className={`text-xs font-bold ${msgCls(profileMsg.type)}`}>{profileMsg.text}</p>}
+                    <button type="submit" disabled={savingProfile}
+                      className="px-8 py-3.5 bg-[#1A0F2E] hover:bg-[#0D0717] text-white rounded-full font-black text-xs uppercase tracking-wider transition-all shadow-md disabled:opacity-60">
+                      {savingProfile ? 'Saving…' : 'Save Changes'}
+                    </button>
                   </form>
                 </div>
               )}
 
-              {/* ORDERS TAB */}
               {activeTab === 'orders' && (
-                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="mb-8">
-                    <h2 className="text-2xl font-black uppercase mb-2">Order History</h2>
-                    <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Track and manage your recent purchases.</p>
-                  </div>
+                <div>
+                  <h2 className="text-2xl font-black uppercase mb-2">Order History</h2>
+                  <p className={`text-sm mb-8 ${muted}`}>Orders placed while you were signed in. Orders placed as a guest or before you signed up won't appear here.</p>
 
-                  <div className="space-y-6">
-                    {MOCK_ORDERS.map((order) => (
-                      <div key={order.id} className={`rounded-2xl border overflow-hidden transition-colors ${
-                        darkMode ? 'bg-white/[0.02] border-white/10' : 'bg-slate-50 border-slate-200'
-                      }`}>
-                        {/* Order Header */}
-                        <div className={`px-6 py-4 border-b flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                          darkMode ? 'bg-white/[0.02] border-white/10' : 'bg-slate-100/50 border-slate-200'
-                        }`}>
-                          <div className="flex flex-wrap items-center gap-6">
-                            <div>
-                              <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${darkMode ? 'text-gray-500' : 'text-slate-500'}`}>Order Number</p>
-                              <p className="font-bold text-sm">{order.id}</p>
-                            </div>
-                            <div>
-                              <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${darkMode ? 'text-gray-500' : 'text-slate-500'}`}>Date Placed</p>
-                              <p className="font-bold text-sm">{order.date}</p>
-                            </div>
-                            <div>
-                              <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${darkMode ? 'text-gray-500' : 'text-slate-500'}`}>Total Amount</p>
-                              <p className="font-black text-sm text-[#2D1B4E]">${order.total.toFixed(2)}</p>
-                            </div>
-                          </div>
-                          
-                          <div className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 w-fit ${
-                            order.status === 'Delivered' 
-                              ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
-                              : 'bg-amber-500/10 text-amber-500 border-amber-500/20'
-                          }`}>
-                            {order.status === 'Delivered' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Truck className="w-3.5 h-3.5" />}
-                            {order.status}
-                          </div>
-                        </div>
-
-                        {/* Order Items */}
-                        <div className="px-6 py-4 space-y-4">
-                          {order.items.map((item, idx) => (
-                            <div key={idx} className="flex items-center gap-4">
-                              <img src={item.image} alt={item.name} className="w-16 h-16 rounded-xl object-cover bg-slate-900" />
-                              <div className="flex-1 min-w-0">
-                                <h4 className="font-bold text-sm truncate">{item.name}</h4>
-                                <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Qty: {item.qty}</p>
-                              </div>
-                              <div className="font-black text-sm text-right whitespace-nowrap">
-                                ${(item.price * item.qty).toFixed(2)}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Order Footer */}
-                        <div className={`px-6 py-4 border-t flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-                          darkMode ? 'bg-white/[0.01] border-white/10' : 'bg-white border-slate-200'
-                        }`}>
-                          <div className="flex items-center gap-2 text-xs">
-                            <span className={`font-bold ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Tracking ID:</span>
-                            <span className={`font-mono font-bold px-2 py-1 rounded ${darkMode ? 'bg-white/5 text-white' : 'bg-slate-100 text-slate-900'}`}>
-                              {order.trackingNumber}
-                            </span>
-                          </div>
-                          
-                          <button className={`px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border ${
-                            darkMode 
-                              ? 'bg-transparent border-white/20 hover:bg-white/10 text-white' 
-                              : 'bg-white border-slate-300 hover:bg-slate-50 text-slate-800'
-                          }`}>
-                            Track Package
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* ADDRESSES TAB */}
-              {activeTab === 'addresses' && (
-                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-                    <div>
-                      <h2 className="text-2xl font-black uppercase mb-2">Saved Addresses</h2>
-                      <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Manage your shipping and billing locations.</p>
-                    </div>
-                    <button className="px-5 py-2.5 bg-[#2D1B4E] hover:bg-[#43285F] text-white rounded-full text-xs font-black uppercase tracking-wider transition-all shadow-md">
-                      + Add New Address
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Default Address Card */}
-                    <div className={`relative p-6 rounded-2xl border ${
-                      darkMode ? 'bg-[#070A0F] border-[#2D1B4E]/50 shadow-[0_0_15px_rgba(45,27,78,0.1)]' : 'bg-white border-[#2D1B4E] shadow-md'
-                    }`}>
-                      <div className="absolute top-4 right-4 flex items-center gap-2">
-                        <button className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/10' : 'text-slate-400 hover:text-slate-900 hover:bg-slate-100'}`}><Edit3 className="w-4 h-4" /></button>
-                        <button className="p-1.5 rounded-lg text-red-500 hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>
-                      </div>
-                      
-                      <div className="inline-block px-2.5 py-1 mb-4 rounded text-[10px] font-black uppercase tracking-wider bg-[#2D1B4E]/10 text-[#2D1B4E]">
-                        Default Shipping
-                      </div>
-                      
-                      <h3 className="font-black text-lg mb-2">Kaveesha</h3>
-                      <div className={`space-y-1 text-sm ${darkMode ? 'text-gray-400' : 'text-slate-600'}`}>
-                        <p>123 Main Street</p>
-                        <p>Ipalogama</p>
-                        <p>Anuradhapura, 00100</p>
-                        <p>Sri Lanka</p>
-                        <p className="pt-2 font-mono text-xs">+94 77 123 4567</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* WISHLIST TAB */}
-              {activeTab === 'wishlist' && (
-                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="mb-8">
-                    <h2 className="text-2xl font-black uppercase mb-2">My Wishlist</h2>
-                    <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Items you've saved for later.</p>
-                  </div>
-
-                  {MOCK_WISHLIST.length === 0 ? (
-                    <div className="text-center py-20">
-                      <Heart className="w-12 h-12 mx-auto mb-4 text-gray-500 opacity-50" />
-                      <p className={`font-bold ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Your wishlist is currently empty.</p>
+                  {ordersLoading ? (
+                    <p className={`text-sm font-bold ${muted}`}>Loading your orders…</p>
+                  ) : ordersError ? (
+                    <p className="text-sm font-bold text-red-500">{ordersError}</p>
+                  ) : orders.length === 0 ? (
+                    <div className="text-center py-16">
+                      <Package className="w-12 h-12 mx-auto mb-4 text-gray-500 opacity-50" />
+                      <p className={`font-bold mb-4 ${muted}`}>You haven't placed any orders yet.</p>
+                      <Link to="/" className="inline-block px-6 py-3 bg-[#1A0F2E] text-white rounded-full text-xs font-black uppercase tracking-wider">Start Shopping</Link>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-                      {MOCK_WISHLIST.map((item) => (
-                        <div key={item.id} className={`group rounded-2xl border p-4 flex flex-col transition-all ${
-                          darkMode ? 'bg-white/[0.02] border-white/10 hover:border-[#2D1B4E]/30' : 'bg-white border-slate-200 hover:shadow-lg'
-                        }`}>
-                          <div className="relative w-full h-40 rounded-xl overflow-hidden mb-4 bg-slate-900">
-                            <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                            <button className="absolute top-2 right-2 p-2 bg-black/50 hover:bg-red-500/80 backdrop-blur-md text-white rounded-full transition-colors">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                          <div className="flex-1">
-                            <h4 className="font-bold text-sm mb-2 line-clamp-2">{item.name}</h4>
-                            <div className="text-lg font-black text-[#2D1B4E]">
-                              ${item.price.toFixed(2)}
+                    <div className="space-y-6">
+                      {orders.map((order) => {
+                        const status = getOrderStatus(order);
+                        const StatusIcon = status.icon;
+                        const rate = order.lkrRate || lkrRate;
+                        const placed = order.createdAt?.toDate ? order.createdAt.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+                        return (
+                          <div key={order.id} className={`rounded-2xl border overflow-hidden ${darkMode ? 'bg-white/[0.02] border-white/10' : 'bg-slate-50 border-slate-200'}`}>
+                            <div className={`px-6 py-4 border-b flex flex-col md:flex-row md:items-center justify-between gap-4 ${darkMode ? 'border-white/10' : 'bg-slate-100/50 border-slate-200'}`}>
+                              <div className="flex flex-wrap items-center gap-6">
+                                <div>
+                                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${muted}`}>Order</p>
+                                  <p className="font-mono font-bold text-xs">{order.id}</p>
+                                </div>
+                                <div>
+                                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${muted}`}>Placed</p>
+                                  <p className="font-bold text-sm">{placed}</p>
+                                </div>
+                                <div>
+                                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${muted}`}>Total</p>
+                                  <p className="font-black text-sm text-[#1A0F2E]">
+                                    {order.grandTotalLkr
+                                      ? `Rs. ${Number(order.grandTotalLkr).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                      : formatLKR(order.grandTotal, rate)}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 w-fit ${TONES[status.tone]}`}>
+                                <StatusIcon className="w-3.5 h-3.5" /> {status.label}
+                              </div>
                             </div>
+
+                            <div className="px-6 py-4 space-y-4">
+                              {(order.items || []).map((item, idx) => (
+                                <div key={idx} className="flex items-center gap-4">
+                                  {item.image && <img src={item.image} alt="" className="w-16 h-16 rounded-xl object-cover bg-slate-200" />}
+                                  <div className="flex-1 min-w-0">
+                                    <h4 className="font-bold text-sm line-clamp-2">{item.name}</h4>
+                                    <p className={`text-xs mt-1 ${muted}`}>Qty: {item.quantity}</p>
+                                  </div>
+                                  <div className="font-black text-sm text-right whitespace-nowrap">{formatLKR(item.price * item.quantity, rate)}</div>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className={`px-6 py-3 border-t text-xs font-medium ${muted} ${darkMode ? 'border-white/10' : 'border-slate-200 bg-white'}`}>{status.note}</div>
                           </div>
-                          <button className="w-full mt-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-[#2D1B4E] text-[#2D1B4E] hover:bg-[#2D1B4E] hover:text-white">
-                            Move to Cart
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
               )}
 
-              {/* SETTINGS TAB */}
-              {activeTab === 'settings' && (
-                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="mb-8">
-                    <h2 className="text-2xl font-black uppercase mb-2">Account Settings</h2>
-                    <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Manage preferences and security parameters.</p>
-                  </div>
-
-                  <div className="space-y-8 max-w-2xl">
-                    
-                    {/* Notifications Section */}
-                    <section>
-                      <h3 className="text-sm font-black uppercase tracking-widest flex items-center gap-2 mb-4">
-                        <Bell className="w-4 h-4 text-[#2D1B4E]" /> Notifications
-                      </h3>
-                      <div className={`rounded-2xl border p-2 ${darkMode ? 'bg-white/[0.02] border-white/10' : 'bg-slate-50 border-slate-200'}`}>
-                        
-                        <div className={`flex items-center justify-between p-4 border-b ${darkMode ? 'border-white/10' : 'border-slate-200'}`}>
-                          <div>
-                            <p className="font-bold text-sm">Order Updates</p>
-                            <p className={`text-xs mt-0.5 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Receive SMS and email tracking updates.</p>
-                          </div>
-                          <div className="w-12 h-6 rounded-full relative cursor-pointer transition-colors bg-[#2D1B4E]">
-                            <div className="absolute right-1 top-1 bottom-1 w-4 rounded-full bg-white shadow-sm" />
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between p-4">
-                          <div>
-                            <p className="font-bold text-sm">Promotional Offers</p>
-                            <p className={`text-xs mt-0.5 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Flash deals and exclusive discounts.</p>
-                          </div>
-                          <div className={`w-12 h-6 rounded-full relative cursor-pointer transition-colors ${darkMode ? 'bg-white/10' : 'bg-slate-300'}`}>
-                            <div className="absolute left-1 top-1 bottom-1 w-4 rounded-full bg-white shadow-sm" />
-                          </div>
-                        </div>
-
+              {activeTab === 'address' && (
+                <div>
+                  <h2 className="text-2xl font-black uppercase mb-2">Last Shipping Address</h2>
+                  <p className={`text-sm mb-8 ${muted}`}>The address from your most recent order. You can change it at checkout.</p>
+                  {lastOrder?.shippingDetails ? (
+                    <div className={`p-6 rounded-2xl border max-w-md ${darkMode ? 'bg-[#070A0F] border-white/10' : 'bg-white border-slate-200 shadow-sm'}`}>
+                      <h3 className="font-black text-lg mb-2">{lastOrder.shippingDetails.name}</h3>
+                      <div className={`space-y-1 text-sm ${darkMode ? 'text-gray-400' : 'text-slate-600'}`}>
+                        <p>{lastOrder.shippingDetails.address}</p>
+                        <p>{[lastOrder.shippingDetails.city, lastOrder.shippingDetails.district].filter(Boolean).join(', ')}{lastOrder.shippingDetails.postalCode ? `, ${lastOrder.shippingDetails.postalCode}` : ''}</p>
+                        <p>Sri Lanka</p>
+                        <p className="pt-2 font-mono text-xs">{lastOrder.shippingDetails.phone}</p>
                       </div>
-                    </section>
+                    </div>
+                  ) : (
+                    <p className={`text-sm font-bold ${muted}`}>No address saved yet — it appears here after your first order.</p>
+                  )}
+                </div>
+              )}
 
-                    {/* Security Section */}
-                    <section>
-                      <h3 className="text-sm font-black uppercase tracking-widest flex items-center gap-2 mb-4">
-                        <Shield className="w-4 h-4 text-[#2D1B4E]" /> Security
-                      </h3>
-                      <div className={`rounded-2xl border p-6 space-y-4 ${darkMode ? 'bg-white/[0.02] border-white/10' : 'bg-slate-50 border-slate-200'}`}>
-                        
+              {activeTab === 'security' && (
+                <div>
+                  <h2 className="text-2xl font-black uppercase mb-2">Security</h2>
+                  {isPasswordUser ? (
+                    <>
+                      <p className={`text-sm mb-8 ${muted}`}>Change the password you use to sign in with your email.</p>
+                      <form onSubmit={handleChangePassword} className="space-y-4 max-w-md">
                         <div>
-                          <label className={`text-[10px] font-black uppercase tracking-wider block mb-2 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Current Password</label>
-                          <input type="password" placeholder="••••••••" className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${
-                            darkMode ? 'bg-[#070A0F] border-white/10 focus:border-[#2D1B4E] text-white' : 'bg-white border-slate-300 focus:border-[#2D1B4E] text-slate-900'
-                          }`} />
+                          <label className={labelCls}>Current Password</label>
+                          <input type="password" autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} required
+                            className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${inputCls}`} />
                         </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className={`text-[10px] font-black uppercase tracking-wider block mb-2 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>New Password</label>
-                            <input type="password" placeholder="Enter new password" className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${
-                              darkMode ? 'bg-[#070A0F] border-white/10 focus:border-[#2D1B4E] text-white' : 'bg-white border-slate-300 focus:border-[#2D1B4E] text-slate-900'
-                            }`} />
-                          </div>
-                          <div>
-                            <label className={`text-[10px] font-black uppercase tracking-wider block mb-2 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>Confirm Password</label>
-                            <input type="password" placeholder="Confirm new password" className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${
-                              darkMode ? 'bg-[#070A0F] border-white/10 focus:border-[#2D1B4E] text-white' : 'bg-white border-slate-300 focus:border-[#2D1B4E] text-slate-900'
-                            }`} />
-                          </div>
-                        </div>
-
-                        <div className="pt-2">
-                          <button className="px-6 py-2.5 rounded-full text-xs font-black uppercase tracking-wider transition-all border border-[#2D1B4E] text-[#2D1B4E] hover:bg-[#2D1B4E] hover:text-white">
-                            Update Password
-                          </button>
-                        </div>
-                      </div>
-                    </section>
-
-                    {/* Danger Zone */}
-                    <section className="pt-4">
-                      <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
-                          <h4 className="font-bold text-red-500">Delete Account</h4>
-                          <p className={`text-xs mt-1 max-w-sm ${darkMode ? 'text-gray-400' : 'text-slate-600'}`}>
-                            Permanently delete your account and all associated data. This action cannot be undone.
-                          </p>
+                          <label className={labelCls}>New Password</label>
+                          <input type="password" autoComplete="new-password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} required
+                            className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${inputCls}`} />
                         </div>
-                        <button className="px-5 py-2.5 rounded-full bg-red-500 text-white text-xs font-black uppercase tracking-wider hover:bg-red-600 transition-colors whitespace-nowrap">
-                          Delete Account
+                        <div>
+                          <label className={labelCls}>Confirm New Password</label>
+                          <input type="password" autoComplete="new-password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} required
+                            className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${inputCls}`} />
+                        </div>
+                        {pwMsg.text && <p className={`text-xs font-bold ${msgCls(pwMsg.type)}`}>{pwMsg.text}</p>}
+                        <button type="submit" disabled={savingPw}
+                          className="px-6 py-3 rounded-full text-xs font-black uppercase tracking-wider border border-[#1A0F2E] text-[#1A0F2E] hover:bg-[#1A0F2E] hover:text-white transition-all disabled:opacity-60">
+                          {savingPw ? 'Updating…' : 'Update Password'}
                         </button>
-                      </div>
-                    </section>
-
-                  </div>
+                      </form>
+                    </>
+                  ) : (
+                    <p className={`text-sm ${muted}`}>You sign in with {signInMethods}, so your password is managed there, not on Dexvee.</p>
+                  )}
                 </div>
               )}
 
             </div>
           </main>
-
         </div>
       </div>
     </div>

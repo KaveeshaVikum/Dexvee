@@ -1,5 +1,6 @@
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 
 if (!getApps().length) {
   initializeApp({
@@ -136,13 +137,13 @@ export const handler = async (event) => {
 
   try {
     const data = JSON.parse(event.body);
-    const { items, shippingDetails, paymentMethod, subtotal, shippingCost, grandTotal, shippingCarrier, receiptImageBase64, grandTotalLkr, lkrRate } = data;
+    const { items, shippingDetails, paymentMethod, subtotal, shippingCost, grandTotal, shippingCarrier, receiptImageBase64, grandTotalLkr, lkrRate, idToken } = data;
 
     if (!Array.isArray(items) || items.length === 0) {
       throw new Error('Order has no items.');
     }
-    if (!shippingDetails?.name || !shippingDetails?.phone || !shippingDetails?.address) {
-      throw new Error('Shipping details are incomplete.');
+    if (!shippingDetails?.name || !shippingDetails?.phone || !shippingDetails?.address || !shippingDetails?.city || !shippingDetails?.postalCode) {
+      throw new Error('Shipping details are incomplete — name, phone, address, city and postal code are all required.');
     }
     // Bank transfer is the only payment method currently offered. COD and card
     // are blocked here too, not just hidden in the UI, since anyone can call
@@ -152,6 +153,18 @@ export const handler = async (event) => {
     }
     if (paymentMethod === 'BANK_TRANSFER' && !receiptImageBase64) {
       throw new Error('A payment receipt is required for bank transfer orders.');
+    }
+
+    // Who is ordering? Only trust a user id we verified ourselves from a
+    // Firebase ID token. A missing or invalid token just means "guest".
+    let userId = null;
+    if (idToken) {
+      try {
+        const decoded = await getAuth().verifyIdToken(idToken);
+        userId = decoded.uid;
+      } catch (err) {
+        console.warn('Ignoring invalid ID token on order:', err.message);
+      }
     }
 
     const orderRef = db.collection('orders').doc();
@@ -191,6 +204,7 @@ export const handler = async (event) => {
 
     await orderRef.set({
       orderNumber: orderId,
+      userId, // null for guest orders; lets signed-in customers see their order history
       items,
       shippingDetails,
       paymentMethod, // 'COD' | 'CARD' | 'BANK_TRANSFER'

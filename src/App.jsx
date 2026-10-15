@@ -15,7 +15,8 @@ import AdminImporter from "./pages/AdminImporter";
 import ProductPage from './ProductPage';
 
 // Firestore
-import { db } from './firebase';
+import { db, auth } from './firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { getUsdToLkrRate, formatLKR } from './utils/currency';
 
@@ -195,7 +196,7 @@ export default function App() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [checkoutStep, setCheckoutStep] = useState(1);
   const [orderSuccess, setOrderSuccess] = useState(false);
-  const [isEditingAddress, setIsEditingAddress] = useState(false);
+  const [isEditingAddress, setIsEditingAddress] = useState(true);
   
   const [toastMsg, setToastMsg] = useState("");
   const [darkMode, setDarkMode] = useState(false);
@@ -203,16 +204,41 @@ export default function App() {
 
   // User & Shipping Profile
   const [shippingDetails, setShippingDetails] = useState({
-    name: "Kaveesha",
-    email: "vikumkaveesha8@gmail.com",
-    phone: "078 385 8693",
-    address: "Ipalogama",
-    city: "Anuradhapura",
-    district: "Anuradhapura",
+    name: "",
+    email: "",
+    phone: "",
+    address: "",
+    city: "",
+    district: "",
     postalCode: ""
   });
   
   const [paymentMethod, setPaymentMethod] = useState("BANK_TRANSFER");
+
+  // Customer sign-in state. authReady stays false until Firebase has checked
+  // for an existing session, so pages don't flash "signed out" on refresh.
+  const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [, setUserTick] = useState(0);
+  const bumpUser = () => setUserTick((t) => t + 1); // re-render after a name change
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setAuthReady(true);
+    });
+    return unsubscribe;
+  }, []);
+
+  // Signed-in customers get their name/email filled in; guests start blank.
+  useEffect(() => {
+    if (!user) return;
+    setShippingDetails((prev) => ({
+      ...prev,
+      name: prev.name || user.displayName || '',
+      email: prev.email || user.email || ''
+    }));
+  }, [user]);
   const [receiptFile, setReceiptFile] = useState(null); // { base64, previewUrl, name }
   const [receiptError, setReceiptError] = useState("");
 
@@ -375,6 +401,10 @@ export default function App() {
 
     setPlacingOrder(true);
     try {
+      // If signed in, send a fresh ID token so the server can verify who is
+      // ordering (it never trusts a user id sent by the browser). Guests send none.
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
+
       const res = await fetch('/.netlify/functions/place-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -398,7 +428,8 @@ export default function App() {
           // API requires a logisticName, and it needs to match a route CJ
           // actually offers, not a guess.
           shippingCarrier: shippingInfo?.isLiveQuote ? shippingInfo.carrier : null,
-          receiptImageBase64: paymentMethod === 'BANK_TRANSFER' ? receiptFile?.base64 : undefined
+          receiptImageBase64: paymentMethod === 'BANK_TRANSFER' ? receiptFile?.base64 : undefined,
+          idToken
         })
       });
       const data = await res.json();
@@ -616,9 +647,15 @@ export default function App() {
 
             {/* Header Actions */}
             <div className="flex items-center gap-6 shrink-0 text-white">
-              <Link to="/auth" className="flex items-center gap-2 hover:text-cyan-400 transition-colors cursor-pointer bg-white/5 border border-white/5 px-4 py-2 rounded-2xl">
-                <User className="w-5 h-5" />
-                <span className="text-sm font-medium hidden md:block">Sign In</span>
+              <Link to={user ? "/account" : "/auth"} className="flex items-center gap-2 hover:text-cyan-400 transition-colors cursor-pointer bg-white/5 border border-white/5 px-4 py-2 rounded-2xl">
+                {user?.photoURL ? (
+                  <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="w-5 h-5 rounded-full object-cover" />
+                ) : (
+                  <User className="w-5 h-5" />
+                )}
+                <span className="text-sm font-medium hidden md:block">
+                  {user ? (user.displayName?.split(' ')[0] || 'My Account') : 'Sign In'}
+                </span>
               </Link>
 
               <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 hover:text-cyan-400 transition-colors bg-white/5 border border-white/5 px-4 py-2 rounded-2xl">
@@ -776,8 +813,8 @@ export default function App() {
 
           <Route path="/product/:id" element={<ProductPage products={products} lkrRate={lkrRate} onAddToCart={addToCart} onBuyNow={handleBuyNow} />} />
           <Route path="/about" element={<AboutUs />} />
-          <Route path="/auth" element={<AuthPage />} />
-          <Route path="/account" element={<AccountPage darkMode={darkMode} setDarkMode={setDarkMode} />} />
+          <Route path="/auth" element={<AuthPage user={user} authReady={authReady} onProfileUpdated={bumpUser} />} />
+          <Route path="/account" element={<AccountPage darkMode={darkMode} user={user} authReady={authReady} lkrRate={lkrRate} onProfileUpdated={bumpUser} />} />
           <Route path="/admin" element={<AdminImporter />} />
         </Routes>
 
@@ -929,9 +966,21 @@ export default function App() {
                                 <input type="text" value={shippingDetails.address} onChange={e => setShippingDetails({...shippingDetails, address: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-cyan-400 transition-colors" />
                               </div>
                             </div>
-                            <button onClick={() => setIsEditingAddress(false)} className="bg-[#1A0F2E] text-white text-xs font-bold px-6 py-2.5 rounded-xl hover:bg-[#0D0717] transition-colors mt-2">
-                              Save Address
-                            </button>
+                            {(() => {
+                              const addressComplete = ['name', 'phone', 'address', 'city', 'district', 'postalCode'].every((k) => (shippingDetails[k] || '').trim());
+                              return (
+                                <>
+                                  <button
+                                    onClick={() => setIsEditingAddress(false)}
+                                    disabled={!addressComplete}
+                                    className={`text-xs font-bold px-6 py-2.5 rounded-xl transition-colors mt-2 ${addressComplete ? 'bg-[#1A0F2E] text-white hover:bg-[#0D0717]' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                                  >
+                                    Save Address
+                                  </button>
+                                  {!addressComplete && <p className="text-[11px] text-gray-500 mt-2">Please fill in every field — we need your full address and postal code to deliver.</p>}
+                                </>
+                              );
+                            })()}
                           </div>
                         ) : (
                           <div className="p-4 border border-gray-100 rounded-2xl bg-gray-50 flex items-start gap-4">
