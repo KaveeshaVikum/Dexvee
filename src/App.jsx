@@ -9,6 +9,7 @@ import {
 
 // Page Components
 import AccountPage from './AccountPage';
+import GuestTrackPage from './GuestTrackPage';
 import AboutUs from './AboutUs';
 import AuthPage from './AuthPage';
 import AdminImporter from "./pages/AdminImporter";
@@ -196,6 +197,7 @@ export default function App() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [checkoutStep, setCheckoutStep] = useState(1);
   const [orderSuccess, setOrderSuccess] = useState(false);
+  const [placedOrderId, setPlacedOrderId] = useState('');
   const [isEditingAddress, setIsEditingAddress] = useState(true);
   
   const [toastMsg, setToastMsg] = useState("");
@@ -241,6 +243,8 @@ export default function App() {
   }, [user]);
   const [receiptFile, setReceiptFile] = useState(null); // { base64, previewUrl, name }
   const [receiptError, setReceiptError] = useState("");
+  const [paymentReference, setPaymentReference] = useState("");
+  const [paidAmount, setPaidAmount] = useState("");
 
   // Shrinks the chosen image to a small JPEG in the browser before it's sent,
   // so even a big phone photo ends up a few hundred KB.
@@ -398,6 +402,10 @@ export default function App() {
       setReceiptError("Please upload your payment receipt before placing the order.");
       return;
     }
+    if (paymentMethod === 'BANK_TRANSFER' && (!paymentReference.trim() || Number(paidAmount) <= 0)) {
+      setReceiptError("Please enter the paid amount and transaction reference.");
+      return;
+    }
 
     setPlacingOrder(true);
     try {
@@ -429,6 +437,8 @@ export default function App() {
           // actually offers, not a guess.
           shippingCarrier: shippingInfo?.isLiveQuote ? shippingInfo.carrier : null,
           receiptImageBase64: paymentMethod === 'BANK_TRANSFER' ? receiptFile?.base64 : undefined,
+          paymentReference: paymentMethod === 'BANK_TRANSFER' ? paymentReference.trim() : undefined,
+          paidAmount: paymentMethod === 'BANK_TRANSFER' ? Number(paidAmount) : undefined,
           idToken
         })
       });
@@ -441,6 +451,7 @@ export default function App() {
       }
 
       setPlacingOrder(false);
+      setPlacedOrderId(data.orderId || '');
       setOrderSuccess(true);
       setTimeout(() => {
         setOrderSuccess(false);
@@ -449,6 +460,8 @@ export default function App() {
         setCheckoutStep(1);
         setCart([]);
         setReceiptFile(null);
+        setPaymentReference("");
+        setPaidAmount("");
 
         if (data.paymentStatus === 'pending_verification') {
           showToast("Order placed! We'll verify your payment within 3 business days.");
@@ -583,7 +596,7 @@ export default function App() {
             </div>
             <div className="flex items-center gap-4">
               <Link to="/admin" className="hover:text-cyan-400 transition-colors">Sell on Dexvee</Link>
-              <Link to="/account" className="hover:text-cyan-400 transition-colors">Track Order</Link>
+              <Link to="/track" className="hover:text-cyan-400 transition-colors">Track Order</Link>
             </div>
           </div>
         </div>
@@ -812,6 +825,7 @@ export default function App() {
           } />
 
           <Route path="/product/:id" element={<ProductPage products={products} lkrRate={lkrRate} onAddToCart={addToCart} onBuyNow={handleBuyNow} />} />
+          <Route path="/track" element={<GuestTrackPage />} />
           <Route path="/about" element={<AboutUs />} />
           <Route path="/auth" element={<AuthPage user={user} authReady={authReady} onProfileUpdated={bumpUser} />} />
           <Route path="/account" element={<AccountPage darkMode={darkMode} user={user} authReady={authReady} lkrRate={lkrRate} onProfileUpdated={bumpUser} />} />
@@ -892,7 +906,8 @@ export default function App() {
                     <CheckCircle2 className="w-12 h-12 text-emerald-500" />
                   </div>
                   <h3 className="text-3xl font-black text-[#1A0F2E] mb-2">Order Confirmed!</h3>
-                  <p className="text-gray-500 font-medium">Thank you! Your items will be shipped soon.</p>
+                  <p className="text-gray-500 font-medium">Thank you! Your order ID is <span className="font-black text-gray-900">{placedOrderId}</span>.</p>
+                  <p className="text-sm text-gray-500 mt-2">Save this ID to track your order later.</p>
                 </div>
               </div>
             ) : (
@@ -1061,12 +1076,10 @@ export default function App() {
                           <div className="p-5 bg-gray-50 border-2 border-gray-100 rounded-2xl space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
                             <div>
                               <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Transfer to this account</p>
-                              <p className="text-sm mb-3"><span className="text-gray-500">Amount to transfer:</span> <span className="font-black text-gray-900">{formatLKR(grandTotal, lkrRate)}</span></p>
-                              <div className="bg-white border border-gray-200 rounded-xl p-4 text-sm space-y-1">
-                                <p><span className="text-gray-400">Bank:</span> <span className="font-bold text-gray-800">[Your Bank Name]</span></p>
-                                <p><span className="text-gray-400">Account Name:</span> <span className="font-bold text-gray-800">[Your Account Name]</span></p>
-                                <p><span className="text-gray-400">Account Number:</span> <span className="font-bold text-gray-800">[Your Account Number]</span></p>
-                                <p><span className="text-gray-400">Branch:</span> <span className="font-bold text-gray-800">[Your Branch]</span></p>
+                                <p className="text-sm mb-3"><span className="text-gray-500">Amount to transfer:</span> <span className="font-black text-gray-900">{formatLKR(grandTotal, lkrRate)}</span></p>
+                                <div className="bg-white border border-gray-200 rounded-xl p-4 text-sm space-y-1">
+                                <p className="text-amber-700 font-bold">Payment account details will be provided by Dexvee before transfer.</p>
+                                <p className="text-xs text-gray-500">Do not send money until the account details are confirmed by Dexvee support.</p>
                               </div>
                             </div>
 
@@ -1088,6 +1101,10 @@ export default function App() {
                                   Remove and choose a different photo
                                 </button>
                               )}
+                              <div className="grid gap-3 sm:grid-cols-2 mt-4">
+                                <input type="number" min="1" step="0.01" value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} placeholder="Amount paid (LKR)" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-fuchsia-400" />
+                                <input type="text" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} placeholder="Transaction reference" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-fuchsia-400" />
+                              </div>
                               {receiptError && <p className="text-xs text-red-500 font-bold mt-2">{receiptError}</p>}
                             </div>
 
@@ -1215,7 +1232,7 @@ export default function App() {
           <div className="flex justify-center gap-6 mb-4 text-xs font-semibold text-gray-500">
             <Link to="/about" className="hover:text-cyan-600 transition-colors">About Us</Link>
             <span>•</span>
-            <Link to="/account" className="hover:text-cyan-600 transition-colors">Track Order</Link>
+            <Link to="/track" className="hover:text-cyan-600 transition-colors">Track Order</Link>
           </div>
           <p className="text-sm font-medium text-gray-400">© 2026 Dexvee Express. All rights reserved.</p>
         </footer>

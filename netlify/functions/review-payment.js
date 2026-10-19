@@ -1,5 +1,5 @@
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { attemptCjForward } from './place-order.js';
 
 if (!getApps().length) {
@@ -49,7 +49,7 @@ export const handler = async (event) => {
     }
 
     if (action === 'reject') {
-      await orderRef.update({ paymentStatus: 'rejected' });
+      await orderRef.update({ paymentStatus: 'rejected', status: 'cancelled', updatedAt: FieldValue.serverTimestamp() });
       return {
         statusCode: 200,
         body: JSON.stringify({ success: true, paymentStatus: 'rejected' })
@@ -67,9 +67,11 @@ export const handler = async (event) => {
 
     await orderRef.update({
       paymentStatus: 'confirmed',
+      status: forwardResult.cjOrderStatus === 'created' ? 'processing' : 'payment_confirmed',
       cjOrderStatus: forwardResult.cjOrderStatus,
       cjOrderId: forwardResult.cjOrderId,
-      cjError: forwardResult.cjError
+      cjError: forwardResult.cjError,
+      updatedAt: FieldValue.serverTimestamp()
     });
 
     return {

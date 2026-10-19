@@ -40,6 +40,8 @@ export const handler = async (event) => {
         items: data.items,
         grandTotal: data.grandTotal,
         grandTotalLkr: data.grandTotalLkr || null,
+        paidAmount: data.paidAmount || null,
+        paymentReference: data.paymentReference || null,
         shippingCarrier: data.shippingCarrier || null,
         createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : 0,
         receiptImage: receiptSnap.exists ? receiptSnap.data().image : null

@@ -32,6 +32,10 @@ export const handler = async (event) => {
   try {
     const data = JSON.parse(event.body);
 
+    if (!process.env.ADMIN_PASSCODE || data.passcode !== process.env.ADMIN_PASSCODE) {
+      return { statusCode: 401, body: JSON.stringify({ success: false, error: 'Not authorized.' }) };
+    }
+
     if (data.action === 'add') {
       const { name, category, costPrice, shippingFee, supplier, image, tag, markupPercent } = data;
       if (!name || !costPrice) {

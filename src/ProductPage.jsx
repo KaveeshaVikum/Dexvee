@@ -235,7 +235,7 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
           <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 space-y-3">
             <div className="flex items-center gap-3 text-sm text-gray-600">
               <Truck className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />
-              <span>Standard delivery, usually within 5–7 business days</span>
+              <span>Estimated delivery time varies by product and shipping route</span>
             </div>
             <div className="flex items-center gap-3 text-sm text-gray-600">
               <ShieldCheck className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />
@@ -243,7 +243,7 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
             </div>
             <div className="flex items-center gap-3 text-sm text-gray-600">
               <Lock className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />
-              <span>Cash on Delivery Available</span>
+              <span>Payment by bank transfer with receipt verification</span>
             </div>
             <div className="flex items-center gap-3 text-sm text-gray-600">
               <PackageCheck className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />

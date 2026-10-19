@@ -202,7 +202,7 @@ export default function ProductDetail() {
             <div className="flex items-center gap-3">
               <Truck className="w-4 h-4 text-slate-700 flex-shrink-0" />
               <span>
-                Standard delivery within 5–7 business days
+                Estimated delivery time varies by product and shipping route
                 <strong className="text-slate-900 ml-1">
                   ({shippingFeeUSD > 0 ? `Shipping: ${shippingFeeLKR}` : 'Free Delivery'})
                 </strong>
@@ -216,7 +216,7 @@ export default function ProductDetail() {
 
             <div className="flex items-center gap-3">
               <Lock className="w-4 h-4 text-slate-700 flex-shrink-0" />
-              <span>Cash on Delivery Available</span>
+              <span>Payment by bank transfer with receipt verification</span>
             </div>
 
             <div className="flex items-center gap-3">

@@ -88,7 +88,9 @@ export default function AdminDashboard() {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    if (password === "admin123") {
+    // The real credential is checked server-side by the admin functions.
+    // Keep this client gate free of any hard-coded secret.
+    if (password.trim()) {
       setIsAuthenticated(true);
       setAuthError("");
     } else {
@@ -122,9 +124,10 @@ export default function AdminDashboard() {
       const res = await fetch('/.netlify/functions/import-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          cjProductId: externalUrl, 
-          customCategory: 'Gadgets' 
+          body: JSON.stringify({
+            cjProductId: externalUrl,
+            customCategory: 'Gadgets',
+            passcode: password
         }),
       });
       
@@ -154,7 +157,7 @@ export default function AdminDashboard() {
       const res = await fetch('/.netlify/functions/manage-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'add', ...manualItem, markupPercent })
+        body: JSON.stringify({ action: 'add', ...manualItem, markupPercent, passcode: password })
       });
       const data = await res.json();
 
@@ -178,7 +181,7 @@ export default function AdminDashboard() {
       const res = await fetch('/.netlify/functions/manage-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', id })
+        body: JSON.stringify({ action: 'delete', id, passcode: password })
       });
       const data = await res.json();
 
@@ -201,7 +204,11 @@ export default function AdminDashboard() {
   const handleBackfillShipping = async () => {
     setBackfilling(true);
     try {
-      const res = await fetch('/.netlify/functions/backfill-vid', { method: 'POST' });
+      const res = await fetch('/.netlify/functions/backfill-vid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: password })
+      });
       const data = await res.json();
       if (data.success) {
         showStatus('success', data.message);
@@ -531,6 +538,8 @@ export default function AdminDashboard() {
                       <p className="text-gray-400">{o.shippingDetails?.address}, {o.shippingDetails?.city}</p>
                       <p className="text-gray-400">{(o.items || []).map((i) => `${i.name} ×${i.quantity}`).join(', ')}</p>
                       <p className="pt-1">Expected transfer: <span className="font-black text-[#00F2FE]">{o.grandTotalLkr ? `Rs. ${Number(o.grandTotalLkr).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : formatLKR(o.grandTotal, lkrRate)}</span></p>
+                      <p>Paid amount: <span className="font-bold text-white">{o.paidAmount ? `Rs. ${Number(o.paidAmount).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'Not provided'}</span></p>
+                      <p>Transaction reference: <span className="font-mono text-cyan-300">{o.paymentReference || 'Not provided'}</span></p>
                       <p className={ageDays >= 2 ? 'text-amber-400 font-bold' : 'text-gray-500'}>Placed {ageDays === 0 ? 'today' : `${ageDays} day${ageDays > 1 ? 's' : ''} ago`}{ageDays >= 2 ? ' — nearing your 3-day promise' : ''}</p>
                       <p className="text-gray-600 font-mono">Order {o.id}</p>
                     </div>
