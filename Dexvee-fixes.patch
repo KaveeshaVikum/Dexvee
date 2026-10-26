@@ -1,0 +1,1277 @@
+From cd4d7bb29b045376bda8a132c7ec18fa7fae64d2 Mon Sep 17 00:00:00 2001
+From: Kaveesha Vikum <vikumkaveesha8@gmail.com>
+Date: Mon, 19 Oct 2026 12:06:14 +0000
+Subject: [PATCH] Add guest tracking and harden order flow
+
+---
+ netlify/functions/backfill-vid.js         |   7 +-
+ netlify/functions/get-pending-payments.js |   4 +-
+ netlify/functions/import-products.js      |   7 +-
+ netlify/functions/lookup-order.js         |  98 +++++++++
+ netlify/functions/manage-products.js      |   6 +-
+ netlify/functions/place-order.js          |  85 +++++++-
+ netlify/functions/review-payment.js       |  10 +-
+ package-lock.json                         | 234 ++++++++++++++--------
+ src/App.jsx                               |  37 +++-
+ src/GuestTrackPage.jsx                    | 162 +++++++++++++++
+ src/ProductPage.jsx                       |   6 +-
+ src/pages/AdminDashboard.jsx              |  25 ++-
+ src/pages/ProductDetail.jsx               |   6 +-
+ 13 files changed, 568 insertions(+), 119 deletions(-)
+ create mode 100644 netlify/functions/lookup-order.js
+ create mode 100644 src/GuestTrackPage.jsx
+
+diff --git a/netlify/functions/backfill-vid.js b/netlify/functions/backfill-vid.js
+index f4bc372..a1e22d0 100644
+--- a/netlify/functions/backfill-vid.js
++++ b/netlify/functions/backfill-vid.js
+@@ -58,6 +58,11 @@ export const handler = async (event) => {
+   }
+ 
+   try {
++    const data = JSON.parse(event.body || '{}');
++    if (!process.env.ADMIN_PASSCODE || data.passcode !== process.env.ADMIN_PASSCODE) {
++      return { statusCode: 401, body: JSON.stringify({ success: false, error: 'Not authorized.' }) };
++    }
++
+     const apiKey = process.env.VITE_CJ_API_TOKEN || process.env.CJ_API_TOKEN;
+     if (!apiKey) throw new Error('CJ API Key is missing in Netlify Environment Variables!');
+ 
+@@ -106,4 +111,4 @@ export const handler = async (event) => {
+       body: JSON.stringify({ success: false, error: error.message })
+     };
+   }
+-};
+\ No newline at end of file
++};
+diff --git a/netlify/functions/get-pending-payments.js b/netlify/functions/get-pending-payments.js
+index b6453ac..f3157ca 100644
+--- a/netlify/functions/get-pending-payments.js
++++ b/netlify/functions/get-pending-payments.js
+@@ -40,6 +40,8 @@ export const handler = async (event) => {
+         items: data.items,
+         grandTotal: data.grandTotal,
+         grandTotalLkr: data.grandTotalLkr || null,
++        paidAmount: data.paidAmount || null,
++        paymentReference: data.paymentReference || null,
+         shippingCarrier: data.shippingCarrier || null,
+         createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : 0,
+         receiptImage: receiptSnap.exists ? receiptSnap.data().image : null
+@@ -52,4 +54,4 @@ export const handler = async (event) => {
+   } catch (error) {
+     return { statusCode: 500, body: JSON.stringify({ success: false, error: error.message }) };
+   }
+-};
+\ No newline at end of file
++};
+diff --git a/netlify/functions/import-products.js b/netlify/functions/import-products.js
+index 6a30799..02a31ea 100644
+--- a/netlify/functions/import-products.js
++++ b/netlify/functions/import-products.js
+@@ -98,6 +98,11 @@ export const handler = async (event) => {
+ 
+   try {
+     const data = JSON.parse(event.body);
++
++    if (!process.env.ADMIN_PASSCODE || data.passcode !== process.env.ADMIN_PASSCODE) {
++      return { statusCode: 401, body: JSON.stringify({ success: false, error: 'Not authorized.' }) };
++    }
++
+     const rawInput = data.cjProductId;
+ 
+     if (!rawInput) {
+@@ -174,4 +179,4 @@ export const handler = async (event) => {
+       body: JSON.stringify({ success: false, error: error.message })
+     };
+   }
+-};
+\ No newline at end of file
++};
+diff --git a/netlify/functions/lookup-order.js b/netlify/functions/lookup-order.js
+new file mode 100644
+index 0000000..95f1f67
+--- /dev/null
++++ b/netlify/functions/lookup-order.js
+@@ -0,0 +1,98 @@
++import { initializeApp, cert, getApps } from 'firebase-admin/app';
++import { getFirestore } from 'firebase-admin/firestore';
++
++if (!getApps().length) {
++  initializeApp({
++    credential: cert({
++      projectId: process.env.FIREBASE_PROJECT_ID,
++      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
++      privateKey: process.env.FIREBASE_PRIVATE_KEY
++        ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
++        : undefined
++    })
++  });
++}
++
++const db = getFirestore();
++
++function normalize(value) {
++  return String(value || '').trim().toLowerCase();
++}
++
++function normalizeOrderNumber(value) {
++  return String(value || '').trim();
++}
++
++function safeDate(value) {
++  return value?.toMillis ? value.toMillis() : null;
++}
++
++export const handler = async (event) => {
++  if (event.httpMethod !== 'POST') {
++    return { statusCode: 405, body: JSON.stringify({ success: false, error: 'Method Not Allowed' }) };
++  }
++
++  try {
++    const { orderNumber, identity } = JSON.parse(event.body || '{}');
++    const requestedOrderNumber = normalizeOrderNumber(orderNumber);
++    const requestedIdentity = normalize(identity);
++
++    if (!requestedOrderNumber || !requestedIdentity || requestedOrderNumber.length > 80 || requestedIdentity.length > 160) {
++      return { statusCode: 400, body: JSON.stringify({ success: false, error: 'Invalid tracking request.' }) };
++    }
++
++    const snapshot = await db.collection('orders')
++      .where('orderNumber', '==', requestedOrderNumber)
++      .limit(1)
++      .get();
++
++    // Use the same message for a missing order and a failed identity check.
++    // This avoids revealing whether an order number exists.
++    if (snapshot.empty) {
++      return { statusCode: 404, body: JSON.stringify({ success: false, error: 'Order not found.' }) };
++    }
++
++    const orderDoc = snapshot.docs[0];
++    const order = orderDoc.data();
++    const emailMatches = normalize(order.shippingDetails?.email) === requestedIdentity;
++    const phoneLast4 = String(order.shippingDetails?.phone || '').replace(/\D/g, '').slice(-4);
++    const phoneMatches = /^\d{4}$/.test(requestedIdentity) && phoneLast4 === requestedIdentity;
++
++    if (!emailMatches && !phoneMatches) {
++      return { statusCode: 404, body: JSON.stringify({ success: false, error: 'Order not found.' }) };
++    }
++
++    const firstItem = Array.isArray(order.items) ? order.items[0] : null;
++    const status = order.paymentStatus === 'pending_verification'
++      ? 'pending_verification'
++      : order.paymentStatus === 'rejected'
++        ? 'cancelled'
++        : order.cjOrderStatus === 'created' && order.status === 'placed'
++          ? 'processing'
++          : String(order.status || 'placed').toLowerCase();
++
++    return {
++      statusCode: 200,
++      body: JSON.stringify({
++        success: true,
++        order: {
++          orderNumber: order.orderNumber || orderDoc.id,
++          productName: firstItem?.name || 'Your order',
++          quantity: Array.isArray(order.items)
++            ? order.items.reduce((total, item) => total + (Number(item.quantity) || 0), 0)
++            : 1,
++          status,
++          paymentStatus: order.paymentStatus || null,
++          trackingNumber: order.trackingNumber || null,
++          carrier: order.shippingCarrier || null,
++          trackingUrl: order.trackingUrl || null,
++          estimatedDelivery: order.estimatedDelivery || 'Delivery time varies by product and shipping route.',
++          updatedAt: safeDate(order.updatedAt || order.createdAt)
++        }
++      })
++    };
++  } catch (error) {
++    console.error('Guest order lookup error:', error);
++    return { statusCode: 500, body: JSON.stringify({ success: false, error: 'Unable to look up the order right now.' }) };
++  }
++};
+diff --git a/netlify/functions/manage-products.js b/netlify/functions/manage-products.js
+index 17d9c80..fd56377 100644
+--- a/netlify/functions/manage-products.js
++++ b/netlify/functions/manage-products.js
+@@ -32,6 +32,10 @@ export const handler = async (event) => {
+   try {
+     const data = JSON.parse(event.body);
+ 
++    if (!process.env.ADMIN_PASSCODE || data.passcode !== process.env.ADMIN_PASSCODE) {
++      return { statusCode: 401, body: JSON.stringify({ success: false, error: 'Not authorized.' }) };
++    }
++
+     if (data.action === 'add') {
+       const { name, category, costPrice, shippingFee, supplier, image, tag, markupPercent } = data;
+       if (!name || !costPrice) {
+@@ -75,4 +79,4 @@ export const handler = async (event) => {
+       body: JSON.stringify({ success: false, error: error.message })
+     };
+   }
+-};
+\ No newline at end of file
++};
+diff --git a/netlify/functions/place-order.js b/netlify/functions/place-order.js
+index 316fcca..9aee606 100644
+--- a/netlify/functions/place-order.js
++++ b/netlify/functions/place-order.js
+@@ -130,6 +130,56 @@ async function saveReceipt(orderId, receiptImageBase64) {
+   });
+ }
+ 
++const INITIAL_PRODUCT_PRICES = {
++  '1': 34.99,
++  '2': 64.50,
++  '3': 89.90,
++  '4': 24.99,
++  '5': 18.50,
++  '6': 29.00
++};
++
++async function validateAndPriceItems(items) {
++  const validatedItems = [];
++
++  for (const item of items) {
++    const id = String(item?.id || '');
++    const quantity = Number(item?.quantity);
++    if (!id || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
++      throw new Error('One or more order items are invalid.');
++    }
++
++    let productPrice = INITIAL_PRODUCT_PRICES[id];
++    if (productPrice === undefined) {
++      const productSnap = await db.collection('products').doc(id).get();
++      if (!productSnap.exists) throw new Error('One or more products are no longer available.');
++      productPrice = Number(productSnap.data()?.sellingPrice);
++    }
++
++    if (!Number.isFinite(productPrice) || productPrice < 0) {
++      throw new Error('A product price could not be verified.');
++    }
++
++    if (Math.abs(Number(item.price) - productPrice) > 0.01) {
++      throw new Error('A product price changed. Please refresh and try again.');
++    }
++
++    validatedItems.push({
++      id,
++      name: String(item.name || 'Product').slice(0, 200),
++      image: String(item.image || '').slice(0, 1000),
++      vid: item.vid || null,
++      quantity,
++      price: productPrice
++    });
++  }
++
++  return {
++    items: validatedItems,
++    subtotal: Math.round(validatedItems.reduce((sum, item) => sum + item.price * item.quantity, 0) * 100) / 100
++  };
++}
++
+ export const handler = async (event) => {
+   if (event.httpMethod !== 'POST') {
+     return { statusCode: 405, body: 'Method Not Allowed' };
+@@ -137,7 +187,7 @@ export const handler = async (event) => {
+ 
+   try {
+     const data = JSON.parse(event.body);
+-    const { items, shippingDetails, paymentMethod, subtotal, shippingCost, grandTotal, shippingCarrier, receiptImageBase64, grandTotalLkr, lkrRate, idToken } = data;
++    const { items, shippingDetails, paymentMethod, subtotal, shippingCost, grandTotal, shippingCarrier, receiptImageBase64, paymentReference, paidAmount, grandTotalLkr, lkrRate, idToken } = data;
+ 
+     if (!Array.isArray(items) || items.length === 0) {
+       throw new Error('Order has no items.');
+@@ -154,6 +204,20 @@ export const handler = async (event) => {
+     if (paymentMethod === 'BANK_TRANSFER' && !receiptImageBase64) {
+       throw new Error('A payment receipt is required for bank transfer orders.');
+     }
++    if (paymentMethod === 'BANK_TRANSFER' && (!String(paymentReference || '').trim() || !Number.isFinite(Number(paidAmount)) || Number(paidAmount) <= 0)) {
++      throw new Error('Paid amount and transaction reference are required for bank transfer orders.');
++    }
++
++    const priced = await validateAndPriceItems(items);
++    const requestedShipping = Number(shippingCost);
++    const requestedGrandTotal = Number(grandTotal);
++    if (!Number.isFinite(requestedShipping) || requestedShipping < 0 || requestedShipping > 1000) {
++      throw new Error('The shipping amount could not be verified.');
++    }
++    const verifiedGrandTotal = Math.round((priced.subtotal + requestedShipping) * 100) / 100;
++    if (Math.abs(Number(subtotal) - priced.subtotal) > 0.01 || Math.abs(requestedGrandTotal - verifiedGrandTotal) > 0.01) {
++      throw new Error('The order total changed. Please refresh and try again.');
++    }
+ 
+     // Who is ordering? Only trust a user id we verified ourselves from a
+     // Firebase ID token. A missing or invalid token just means "guest".
+@@ -196,7 +260,7 @@ export const handler = async (event) => {
+       // legitimate. Forwarding now, before anyone's checked the receipt,
+       // would mean paying CJ for orders nobody's actually confirmed as paid.
+     } else if (paymentMethod === 'CARD') {
+-      const forwardResult = await attemptCjForward({ orderId, shippingDetails, items, shippingCarrier });
++      const forwardResult = await attemptCjForward({ orderId, shippingDetails, items: priced.items, shippingCarrier });
+       cjOrderStatus = forwardResult.cjOrderStatus;
+       cjOrderId = forwardResult.cjOrderId;
+       cjError = forwardResult.cjError;
+@@ -205,22 +269,25 @@ export const handler = async (event) => {
+     await orderRef.set({
+       orderNumber: orderId,
+       userId, // null for guest orders; lets signed-in customers see their order history
+-      items,
+       shippingDetails,
+-      paymentMethod, // 'COD' | 'CARD' | 'BANK_TRANSFER'
++      paymentMethod, // 'BANK_TRANSFER'
+       paymentStatus, // 'confirmed' | 'pending_verification' | 'rejected'
+       hasReceipt, // the image itself lives in orderReceipts/{orderId}
++      paymentReference: paymentReference ? String(paymentReference).trim().slice(0, 120) : null,
++      paidAmount: paymentMethod === 'BANK_TRANSFER' ? Number(paidAmount) : null,
+       shippingCarrier: shippingCarrier || null, // kept so review-payment.js can forward to CJ later using the same quoted carrier
+-      subtotal,
+-      shippingCost,
+-      grandTotal,
++      items: priced.items,
++      subtotal: priced.subtotal,
++      shippingCost: requestedShipping,
++      grandTotal: verifiedGrandTotal,
+       grandTotalLkr: grandTotalLkr || null, // LKR amount shown at checkout — what a bank transfer should match
+       lkrRate: lkrRate || null,
+       status: 'placed',
+       cjOrderStatus, // 'not_applicable' | 'created' | 'failed' | 'skipped_no_cj_items' | 'skipped_no_live_quote'
+       cjOrderId,
+       cjError,
+-      createdAt: FieldValue.serverTimestamp()
++      createdAt: FieldValue.serverTimestamp(),
++      updatedAt: FieldValue.serverTimestamp()
+     });
+ 
+     return {
+@@ -233,4 +300,4 @@ export const handler = async (event) => {
+       body: JSON.stringify({ success: false, error: error.message })
+     };
+   }
+-};
+\ No newline at end of file
++};
+diff --git a/netlify/functions/review-payment.js b/netlify/functions/review-payment.js
+index 5ee3e37..54a5db2 100644
+--- a/netlify/functions/review-payment.js
++++ b/netlify/functions/review-payment.js
+@@ -1,5 +1,5 @@
+ import { initializeApp, cert, getApps } from 'firebase-admin/app';
+-import { getFirestore } from 'firebase-admin/firestore';
++import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+ import { attemptCjForward } from './place-order.js';
+ 
+ if (!getApps().length) {
+@@ -49,7 +49,7 @@ export const handler = async (event) => {
+     }
+ 
+     if (action === 'reject') {
+-      await orderRef.update({ paymentStatus: 'rejected' });
++      await orderRef.update({ paymentStatus: 'rejected', status: 'cancelled', updatedAt: FieldValue.serverTimestamp() });
+       return {
+         statusCode: 200,
+         body: JSON.stringify({ success: true, paymentStatus: 'rejected' })
+@@ -67,9 +67,11 @@ export const handler = async (event) => {
+ 
+     await orderRef.update({
+       paymentStatus: 'confirmed',
++      status: forwardResult.cjOrderStatus === 'created' ? 'processing' : 'payment_confirmed',
+       cjOrderStatus: forwardResult.cjOrderStatus,
+       cjOrderId: forwardResult.cjOrderId,
+-      cjError: forwardResult.cjError
++      cjError: forwardResult.cjError,
++      updatedAt: FieldValue.serverTimestamp()
+     });
+ 
+     return {
+@@ -88,4 +90,4 @@ export const handler = async (event) => {
+       body: JSON.stringify({ success: false, error: error.message })
+     };
+   }
+-};
+\ No newline at end of file
++};
+diff --git a/package-lock.json b/package-lock.json
+index 13e1a31..68995e6 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -2246,9 +2246,6 @@
+         "arm"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2266,9 +2263,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2286,9 +2280,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2306,9 +2297,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2326,9 +2314,6 @@
+         "s390x"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2346,9 +2331,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2366,9 +2348,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2386,9 +2365,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2406,9 +2382,6 @@
+         "arm"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2432,9 +2405,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2458,9 +2428,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2484,9 +2451,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2510,9 +2474,6 @@
+         "s390x"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2536,9 +2497,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2562,9 +2520,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2588,9 +2543,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -5778,6 +5730,7 @@
+       "version": "0.11.0",
+       "resolved": "https://registry.npmjs.org/@pkgjs/parseargs/-/parseargs-0.11.0.tgz",
+       "integrity": "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==",
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "engines": {
+@@ -5995,9 +5948,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -6015,9 +5965,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -6035,9 +5982,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -6055,9 +5999,6 @@
+         "s390x"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -6075,9 +6016,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -6095,9 +6033,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -12601,6 +12536,130 @@
+         "ipx": "bin/ipx.mjs"
+       }
+     },
++    "node_modules/ipx/node_modules/@netlify/blobs": {
++      "version": "10.7.13",
++      "resolved": "https://registry.npmjs.org/@netlify/blobs/-/blobs-10.7.13.tgz",
++      "integrity": "sha512-LJnmGtQQ2/NdTo0Cm+YP2xR1vtRle6V3kkzMrAOJgRm1SEFOJOcaAFQrth7RnbxCH/IzCM8QakTaCHHKY+K2qA==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "peer": true,
++      "dependencies": {
++        "@netlify/dev-utils": "5.0.0",
++        "@netlify/otel": "^6.0.6",
++        "@netlify/runtime-utils": "2.3.0"
++      },
++      "engines": {
++        "node": "^14.16.0 || >=16.0.0"
++      }
++    },
++    "node_modules/ipx/node_modules/@netlify/dev-utils": {
++      "version": "5.0.0",
++      "resolved": "https://registry.npmjs.org/@netlify/dev-utils/-/dev-utils-5.0.0.tgz",
++      "integrity": "sha512-ICAsnvbJW9Dv9PGfmJGdjMBsX6uXdJxrA76QE3l3rnGKL5ZcyaA2cJZXacdEmE2ZmtkiVhEJogM15a9nK/ZxDw==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "peer": true,
++      "dependencies": {
++        "@whatwg-node/server": "^0.11.0",
++        "ansis": "^4.1.0",
++        "atomically": "^2.0.3",
++        "chokidar": "^4.0.1",
++        "decache": "^4.6.2",
++        "dettle": "^1.0.5",
++        "dot-prop": "9.0.0",
++        "empathic": "^2.0.0",
++        "env-paths": "^3.0.0",
++        "parse-gitignore": "^2.0.0",
++        "semver": "^7.7.2"
++      },
++      "engines": {
++        "node": "^18.14.0 || >=20"
++      }
++    },
++    "node_modules/ipx/node_modules/@netlify/otel": {
++      "version": "6.0.6",
++      "resolved": "https://registry.npmjs.org/@netlify/otel/-/otel-6.0.6.tgz",
++      "integrity": "sha512-KpiJ8c4V4GvgpQH5E1axg43kYdIN9saToLbzvgrDzPun4XMGwz/tLfoIkwJ4jwrVmbPj35+8+dj3gkggQAtjtg==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "peer": true,
++      "dependencies": {
++        "@opentelemetry/api": "1.9.1",
++        "@opentelemetry/core": "2.8.0",
++        "@opentelemetry/instrumentation": "^0.220.0",
++        "@opentelemetry/resources": "2.9.0",
++        "@opentelemetry/sdk-trace-node": "2.9.0"
++      },
++      "engines": {
++        "node": "^18.14.0 || >=20.6.1"
++      }
++    },
++    "node_modules/ipx/node_modules/@netlify/runtime-utils": {
++      "version": "2.3.0",
++      "resolved": "https://registry.npmjs.org/@netlify/runtime-utils/-/runtime-utils-2.3.0.tgz",
++      "integrity": "sha512-cW8weDvsKV7zfia2m5EcBy6KILGoPD+eYZ3qWNGnIo05DGF28goPES0xKSDkNYgAF/2rRSIhie2qcBhbGVgSRg==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "peer": true,
++      "engines": {
++        "node": "^18.14.0 || >=20"
++      }
++    },
++    "node_modules/ipx/node_modules/chokidar": {
++      "version": "4.0.3",
++      "resolved": "https://registry.npmjs.org/chokidar/-/chokidar-4.0.3.tgz",
++      "integrity": "sha512-Qgzu8kfBvo+cA4962jnP1KkS6Dop5NS6g7R5LFYJr4b8Ub94PPQXUksCw9PvXoeXPRRddRNC5C1JQUR2SMGtnA==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "peer": true,
++      "dependencies": {
++        "readdirp": "^4.0.1"
++      },
++      "engines": {
++        "node": ">= 14.16.0"
++      },
++      "funding": {
++        "url": "https://paulmillr.com/funding/"
++      }
++    },
++    "node_modules/ipx/node_modules/dot-prop": {
++      "version": "9.0.0",
++      "resolved": "https://registry.npmjs.org/dot-prop/-/dot-prop-9.0.0.tgz",
++      "integrity": "sha512-1gxPBJpI/pcjQhKgIU91II6Wkay+dLcN3M6rf2uwP8hRur3HtQXjVrdAK3sjC0piaEuxzMwjXChcETiJl47lAQ==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "peer": true,
++      "dependencies": {
++        "type-fest": "^4.18.2"
++      },
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
++    "node_modules/ipx/node_modules/env-paths": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/env-paths/-/env-paths-3.0.0.tgz",
++      "integrity": "sha512-dtJUTepzMW3Lm/NPxRf3wP4642UWhjL2sQxc+ym2YMj1m/H2zDNQOlezafzkHwn6sMstjHTwG6iQQsctDW/b1A==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "peer": true,
++      "engines": {
++        "node": "^12.20.0 || ^14.13.1 || >=16.0.0"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
+     "node_modules/ipx/node_modules/lru-cache": {
+       "version": "11.5.2",
+       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.5.2.tgz",
+@@ -12611,6 +12670,37 @@
+         "node": "20 || >=22"
+       }
+     },
++    "node_modules/ipx/node_modules/readdirp": {
++      "version": "4.1.2",
++      "resolved": "https://registry.npmjs.org/readdirp/-/readdirp-4.1.2.tgz",
++      "integrity": "sha512-GDhwkLfywWL2s6vEjyhri+eXmfH6j1L7JE27WhqLeYzoh/A3DBaYGEj2H/HFZCn/kMfim73FXxEJTw06WtxQwg==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "peer": true,
++      "engines": {
++        "node": ">= 14.18.0"
++      },
++      "funding": {
++        "type": "individual",
++        "url": "https://paulmillr.com/funding/"
++      }
++    },
++    "node_modules/ipx/node_modules/semver": {
++      "version": "7.8.5",
++      "resolved": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz",
++      "integrity": "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==",
++      "dev": true,
++      "license": "ISC",
++      "optional": true,
++      "peer": true,
++      "bin": {
++        "semver": "bin/semver.js"
++      },
++      "engines": {
++        "node": ">=10"
++      }
++    },
+     "node_modules/ipx/node_modules/unstorage": {
+       "version": "1.17.5",
+       "resolved": "https://registry.npmjs.org/unstorage/-/unstorage-1.17.5.tgz",
+@@ -14077,9 +14167,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -14101,9 +14188,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -14125,9 +14209,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -14149,9 +14230,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+diff --git a/src/App.jsx b/src/App.jsx
+index 56f3a63..766130e 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -9,6 +9,7 @@ import {
+ 
+ // Page Components
+ import AccountPage from './AccountPage';
++import GuestTrackPage from './GuestTrackPage';
+ import AboutUs from './AboutUs';
+ import AuthPage from './AuthPage';
+ import AdminImporter from "./pages/AdminImporter";
+@@ -196,6 +197,7 @@ export default function App() {
+   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+   const [checkoutStep, setCheckoutStep] = useState(1);
+   const [orderSuccess, setOrderSuccess] = useState(false);
++  const [placedOrderId, setPlacedOrderId] = useState('');
+   const [isEditingAddress, setIsEditingAddress] = useState(true);
+   
+   const [toastMsg, setToastMsg] = useState("");
+@@ -241,6 +243,8 @@ export default function App() {
+   }, [user]);
+   const [receiptFile, setReceiptFile] = useState(null); // { base64, previewUrl, name }
+   const [receiptError, setReceiptError] = useState("");
++  const [paymentReference, setPaymentReference] = useState("");
++  const [paidAmount, setPaidAmount] = useState("");
+ 
+   // Shrinks the chosen image to a small JPEG in the browser before it's sent,
+   // so even a big phone photo ends up a few hundred KB.
+@@ -398,6 +402,10 @@ export default function App() {
+       setReceiptError("Please upload your payment receipt before placing the order.");
+       return;
+     }
++    if (paymentMethod === 'BANK_TRANSFER' && (!paymentReference.trim() || Number(paidAmount) <= 0)) {
++      setReceiptError("Please enter the paid amount and transaction reference.");
++      return;
++    }
+ 
+     setPlacingOrder(true);
+     try {
+@@ -429,6 +437,8 @@ export default function App() {
+           // actually offers, not a guess.
+           shippingCarrier: shippingInfo?.isLiveQuote ? shippingInfo.carrier : null,
+           receiptImageBase64: paymentMethod === 'BANK_TRANSFER' ? receiptFile?.base64 : undefined,
++          paymentReference: paymentMethod === 'BANK_TRANSFER' ? paymentReference.trim() : undefined,
++          paidAmount: paymentMethod === 'BANK_TRANSFER' ? Number(paidAmount) : undefined,
+           idToken
+         })
+       });
+@@ -441,6 +451,7 @@ export default function App() {
+       }
+ 
+       setPlacingOrder(false);
++      setPlacedOrderId(data.orderId || '');
+       setOrderSuccess(true);
+       setTimeout(() => {
+         setOrderSuccess(false);
+@@ -449,6 +460,8 @@ export default function App() {
+         setCheckoutStep(1);
+         setCart([]);
+         setReceiptFile(null);
++        setPaymentReference("");
++        setPaidAmount("");
+ 
+         if (data.paymentStatus === 'pending_verification') {
+           showToast("Order placed! We'll verify your payment within 3 business days.");
+@@ -583,7 +596,7 @@ export default function App() {
+             </div>
+             <div className="flex items-center gap-4">
+               <Link to="/admin" className="hover:text-cyan-400 transition-colors">Sell on Dexvee</Link>
+-              <Link to="/account" className="hover:text-cyan-400 transition-colors">Track Order</Link>
++              <Link to="/track" className="hover:text-cyan-400 transition-colors">Track Order</Link>
+             </div>
+           </div>
+         </div>
+@@ -812,6 +825,7 @@ export default function App() {
+           } />
+ 
+           <Route path="/product/:id" element={<ProductPage products={products} lkrRate={lkrRate} onAddToCart={addToCart} onBuyNow={handleBuyNow} />} />
++          <Route path="/track" element={<GuestTrackPage />} />
+           <Route path="/about" element={<AboutUs />} />
+           <Route path="/auth" element={<AuthPage user={user} authReady={authReady} onProfileUpdated={bumpUser} />} />
+           <Route path="/account" element={<AccountPage darkMode={darkMode} user={user} authReady={authReady} lkrRate={lkrRate} onProfileUpdated={bumpUser} />} />
+@@ -892,7 +906,8 @@ export default function App() {
+                     <CheckCircle2 className="w-12 h-12 text-emerald-500" />
+                   </div>
+                   <h3 className="text-3xl font-black text-[#1A0F2E] mb-2">Order Confirmed!</h3>
+-                  <p className="text-gray-500 font-medium">Thank you! Your items will be shipped soon.</p>
++                  <p className="text-gray-500 font-medium">Thank you! Your order ID is <span className="font-black text-gray-900">{placedOrderId}</span>.</p>
++                  <p className="text-sm text-gray-500 mt-2">Save this ID to track your order later.</p>
+                 </div>
+               </div>
+             ) : (
+@@ -1061,12 +1076,10 @@ export default function App() {
+                           <div className="p-5 bg-gray-50 border-2 border-gray-100 rounded-2xl space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                             <div>
+                               <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Transfer to this account</p>
+-                              <p className="text-sm mb-3"><span className="text-gray-500">Amount to transfer:</span> <span className="font-black text-gray-900">{formatLKR(grandTotal, lkrRate)}</span></p>
+-                              <div className="bg-white border border-gray-200 rounded-xl p-4 text-sm space-y-1">
+-                                <p><span className="text-gray-400">Bank:</span> <span className="font-bold text-gray-800">[Your Bank Name]</span></p>
+-                                <p><span className="text-gray-400">Account Name:</span> <span className="font-bold text-gray-800">[Your Account Name]</span></p>
+-                                <p><span className="text-gray-400">Account Number:</span> <span className="font-bold text-gray-800">[Your Account Number]</span></p>
+-                                <p><span className="text-gray-400">Branch:</span> <span className="font-bold text-gray-800">[Your Branch]</span></p>
++                                <p className="text-sm mb-3"><span className="text-gray-500">Amount to transfer:</span> <span className="font-black text-gray-900">{formatLKR(grandTotal, lkrRate)}</span></p>
++                                <div className="bg-white border border-gray-200 rounded-xl p-4 text-sm space-y-1">
++                                <p className="text-amber-700 font-bold">Payment account details will be provided by Dexvee before transfer.</p>
++                                <p className="text-xs text-gray-500">Do not send money until the account details are confirmed by Dexvee support.</p>
+                               </div>
+                             </div>
+ 
+@@ -1088,6 +1101,10 @@ export default function App() {
+                                   Remove and choose a different photo
+                                 </button>
+                               )}
++                              <div className="grid gap-3 sm:grid-cols-2 mt-4">
++                                <input type="number" min="1" step="0.01" value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} placeholder="Amount paid (LKR)" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-fuchsia-400" />
++                                <input type="text" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} placeholder="Transaction reference" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-fuchsia-400" />
++                              </div>
+                               {receiptError && <p className="text-xs text-red-500 font-bold mt-2">{receiptError}</p>}
+                             </div>
+ 
+@@ -1215,7 +1232,7 @@ export default function App() {
+           <div className="flex justify-center gap-6 mb-4 text-xs font-semibold text-gray-500">
+             <Link to="/about" className="hover:text-cyan-600 transition-colors">About Us</Link>
+             <span>•</span>
+-            <Link to="/account" className="hover:text-cyan-600 transition-colors">Track Order</Link>
++            <Link to="/track" className="hover:text-cyan-600 transition-colors">Track Order</Link>
+           </div>
+           <p className="text-sm font-medium text-gray-400">© 2026 Dexvee Express. All rights reserved.</p>
+         </footer>
+@@ -1223,4 +1240,4 @@ export default function App() {
+       </div>
+     </Router>
+   );
+-}
+\ No newline at end of file
++}
+diff --git a/src/GuestTrackPage.jsx b/src/GuestTrackPage.jsx
+new file mode 100644
+index 0000000..c71ae4d
+--- /dev/null
++++ b/src/GuestTrackPage.jsx
+@@ -0,0 +1,162 @@
++import React, { useState } from 'react';
++import { Link } from 'react-router-dom';
++import { Search, Package, Truck, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
++
++const STATUS_LABELS = {
++  placed: 'Order received',
++  payment_pending: 'Payment under review',
++  pending_verification: 'Payment under review',
++  payment_confirmed: 'Payment confirmed',
++  sent_to_cj: 'Order sent for processing',
++  processing: 'Preparing your order',
++  shipped: 'Shipped',
++  in_transit: 'In transit',
++  out_for_delivery: 'Out for delivery',
++  delivered: 'Delivered',
++  delayed: 'Delivery delayed',
++  cancelled: 'Cancelled'
++};
++
++const STATUS_STEPS = [
++  ['placed', 'Order received'],
++  ['payment_confirmed', 'Payment confirmed'],
++  ['processing', 'Preparing your order'],
++  ['shipped', 'Shipped'],
++  ['in_transit', 'In transit'],
++  ['delivered', 'Delivered']
++];
++
++function displayStatus(order) {
++  if (order.paymentStatus === 'pending_verification') return 'pending_verification';
++  if (order.paymentStatus === 'rejected') return 'cancelled';
++  if (order.status === 'placed' && order.paymentStatus === 'confirmed') return 'payment_confirmed';
++  return String(order.status || order.cjOrderStatus || 'placed').toLowerCase();
++}
++
++function stepIndex(status) {
++  const index = STATUS_STEPS.findIndex(([key]) => key === status);
++  if (status === 'pending_verification') return 0;
++  return index < 0 ? 0 : index;
++}
++
++export default function GuestTrackPage() {
++  const [orderNumber, setOrderNumber] = useState('');
++  const [identity, setIdentity] = useState('');
++  const [order, setOrder] = useState(null);
++  const [error, setError] = useState('');
++  const [loading, setLoading] = useState(false);
++
++  async function handleSubmit(event) {
++    event.preventDefault();
++    setError('');
++    setOrder(null);
++    setLoading(true);
++
++    try {
++      const response = await fetch('/.netlify/functions/lookup-order', {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ orderNumber, identity })
++      });
++      const data = await response.json();
++      if (!response.ok || !data.success) throw new Error(data.error || 'Order not found.');
++      setOrder(data.order);
++    } catch {
++      setError('We could not find that order. Check the order number and email or phone details.');
++    } finally {
++      setLoading(false);
++    }
++  }
++
++  const currentStatus = order ? displayStatus(order) : null;
++  const currentStep = order ? stepIndex(currentStatus) : 0;
++
++  return (
++    <main className="min-h-screen bg-[#F5F5F5] px-4 py-10 sm:px-6">
++      <div className="max-w-3xl mx-auto">
++        <div className="text-center mb-8">
++          <Package className="w-10 h-10 mx-auto mb-3 text-[#1A0F2E]" />
++          <h1 className="text-3xl font-black text-gray-900">Track your order</h1>
++          <p className="mt-2 text-sm text-gray-500">No account is required. Use your order number and the email or last four digits of the phone number used at checkout.</p>
++        </div>
++
++        <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 shadow-sm">
++          <div className="grid gap-4 sm:grid-cols-2">
++            <label className="text-xs font-black uppercase tracking-wider text-gray-500">
++              Order number
++              <input
++                value={orderNumber}
++                onChange={(event) => setOrderNumber(event.target.value)}
++                placeholder="e.g. DV-123456"
++                required
++                className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm font-medium outline-none focus:border-[#1A0F2E]"
++              />
++            </label>
++            <label className="text-xs font-black uppercase tracking-wider text-gray-500">
++              Email or phone last 4 digits
++              <input
++                value={identity}
++                onChange={(event) => setIdentity(event.target.value)}
++                placeholder="name@example.com or 4567"
++                required
++                className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm font-medium outline-none focus:border-[#1A0F2E]"
++              />
++            </label>
++          </div>
++          <button disabled={loading} className="mt-5 w-full rounded-xl bg-[#1A0F2E] py-3.5 text-sm font-black uppercase tracking-wider text-white disabled:opacity-60">
++            <Search className="inline-block w-4 h-4 mr-2" />
++            {loading ? 'Checking…' : 'Track Order'}
++          </button>
++          {error && <p className="mt-4 text-sm font-bold text-red-500">{error}</p>}
++        </form>
++
++        {order && (
++          <section className="mt-6 bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 shadow-sm">
++            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-gray-100 pb-5">
++              <div>
++                <p className="text-xs font-black uppercase tracking-wider text-gray-400">Order</p>
++                <h2 className="text-xl font-black text-gray-900">#{order.orderNumber}</h2>
++                <p className="mt-1 text-sm text-gray-500">{order.productName}{order.quantity > 1 ? ` × ${order.quantity}` : ''}</p>
++              </div>
++              <div className="text-left sm:text-right">
++                <p className="text-xs font-black uppercase tracking-wider text-gray-400">Current status</p>
++                <p className="mt-1 text-lg font-black text-[#1A0F2E]">{STATUS_LABELS[currentStatus] || 'Order update'}</p>
++              </div>
++            </div>
++
++            {currentStatus === 'pending_verification' ? (
++              <div className="mt-6 flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
++                <Clock className="w-5 h-5 shrink-0" />
++                <p>We received your payment proof and are checking it. We will contact you when verification is complete.</p>
++              </div>
++            ) : currentStatus === 'delayed' ? (
++              <div className="mt-6 flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
++                <AlertCircle className="w-5 h-5 shrink-0" />
++                <p>Your shipment is taking longer than expected. We are monitoring it and will update you.</p>
++              </div>
++            ) : (
++              <div className="mt-7 space-y-5">
++                {STATUS_STEPS.map(([key, label], index) => (
++                  <div key={key} className="flex items-center gap-3 text-sm">
++                    {index <= currentStep ? <CheckCircle2 className="w-5 h-5 text-emerald-500" /> : <Truck className="w-5 h-5 text-gray-300" />}
++                    <span className={index <= currentStep ? 'font-bold text-gray-900' : 'text-gray-400'}>{label}</span>
++                  </div>
++                ))}
++              </div>
++            )}
++
++            <div className="mt-7 grid gap-3 border-t border-gray-100 pt-5 text-sm text-gray-600 sm:grid-cols-2">
++              {order.estimatedDelivery && <p><strong>Estimated delivery:</strong> {order.estimatedDelivery}</p>}
++              {order.trackingNumber && <p><strong>Tracking number:</strong> {order.trackingNumber}</p>}
++              {order.trackingUrl && <a className="font-bold text-[#1A0F2E] underline" href={order.trackingUrl} target="_blank" rel="noreferrer">Track with carrier</a>}
++            </div>
++          </section>
++        )}
++
++        <div className="mt-7 text-center text-sm text-gray-500">
++          Need help? <Link className="font-bold text-[#1A0F2E] underline" to="/about">Contact support</Link> · <Link className="font-bold text-[#1A0F2E] underline" to="/">Back to store</Link>
++        </div>
++      </div>
++    </main>
++  );
++}
+diff --git a/src/ProductPage.jsx b/src/ProductPage.jsx
+index 0e2d229..9eb8e48 100644
+--- a/src/ProductPage.jsx
++++ b/src/ProductPage.jsx
+@@ -235,7 +235,7 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
+           <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 space-y-3">
+             <div className="flex items-center gap-3 text-sm text-gray-600">
+               <Truck className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />
+-              <span>Standard delivery, usually within 5–7 business days</span>
++              <span>Estimated delivery time varies by product and shipping route</span>
+             </div>
+             <div className="flex items-center gap-3 text-sm text-gray-600">
+               <ShieldCheck className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />
+@@ -243,7 +243,7 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
+             </div>
+             <div className="flex items-center gap-3 text-sm text-gray-600">
+               <Lock className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />
+-              <span>Cash on Delivery Available</span>
++              <span>Payment by bank transfer with receipt verification</span>
+             </div>
+             <div className="flex items-center gap-3 text-sm text-gray-600">
+               <PackageCheck className="w-4.5 h-4.5 text-[#1A0F2E] shrink-0" />
+@@ -254,4 +254,4 @@ export default function ProductPage({ products, lkrRate, onAddToCart, onBuyNow }
+       </div>
+     </div>
+   );
+-}
+\ No newline at end of file
++}
+diff --git a/src/pages/AdminDashboard.jsx b/src/pages/AdminDashboard.jsx
+index 72bafc9..addd1f9 100644
+--- a/src/pages/AdminDashboard.jsx
++++ b/src/pages/AdminDashboard.jsx
+@@ -88,7 +88,9 @@ export default function AdminDashboard() {
+ 
+   const handleLogin = (e) => {
+     e.preventDefault();
+-    if (password === "admin123") {
++    // The real credential is checked server-side by the admin functions.
++    // Keep this client gate free of any hard-coded secret.
++    if (password.trim()) {
+       setIsAuthenticated(true);
+       setAuthError("");
+     } else {
+@@ -122,9 +124,10 @@ export default function AdminDashboard() {
+       const res = await fetch('/.netlify/functions/import-products', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+-        body: JSON.stringify({ 
+-          cjProductId: externalUrl, 
+-          customCategory: 'Gadgets' 
++          body: JSON.stringify({
++            cjProductId: externalUrl,
++            customCategory: 'Gadgets',
++            passcode: password
+         }),
+       });
+       
+@@ -154,7 +157,7 @@ export default function AdminDashboard() {
+       const res = await fetch('/.netlify/functions/manage-products', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+-        body: JSON.stringify({ action: 'add', ...manualItem, markupPercent })
++        body: JSON.stringify({ action: 'add', ...manualItem, markupPercent, passcode: password })
+       });
+       const data = await res.json();
+ 
+@@ -178,7 +181,7 @@ export default function AdminDashboard() {
+       const res = await fetch('/.netlify/functions/manage-products', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+-        body: JSON.stringify({ action: 'delete', id })
++        body: JSON.stringify({ action: 'delete', id, passcode: password })
+       });
+       const data = await res.json();
+ 
+@@ -201,7 +204,11 @@ export default function AdminDashboard() {
+   const handleBackfillShipping = async () => {
+     setBackfilling(true);
+     try {
+-      const res = await fetch('/.netlify/functions/backfill-vid', { method: 'POST' });
++      const res = await fetch('/.netlify/functions/backfill-vid', {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ passcode: password })
++      });
+       const data = await res.json();
+       if (data.success) {
+         showStatus('success', data.message);
+@@ -531,6 +538,8 @@ export default function AdminDashboard() {
+                       <p className="text-gray-400">{o.shippingDetails?.address}, {o.shippingDetails?.city}</p>
+                       <p className="text-gray-400">{(o.items || []).map((i) => `${i.name} ×${i.quantity}`).join(', ')}</p>
+                       <p className="pt-1">Expected transfer: <span className="font-black text-[#00F2FE]">{o.grandTotalLkr ? `Rs. ${Number(o.grandTotalLkr).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : formatLKR(o.grandTotal, lkrRate)}</span></p>
++                      <p>Paid amount: <span className="font-bold text-white">{o.paidAmount ? `Rs. ${Number(o.paidAmount).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'Not provided'}</span></p>
++                      <p>Transaction reference: <span className="font-mono text-cyan-300">{o.paymentReference || 'Not provided'}</span></p>
+                       <p className={ageDays >= 2 ? 'text-amber-400 font-bold' : 'text-gray-500'}>Placed {ageDays === 0 ? 'today' : `${ageDays} day${ageDays > 1 ? 's' : ''} ago`}{ageDays >= 2 ? ' — nearing your 3-day promise' : ''}</p>
+                       <p className="text-gray-600 font-mono">Order {o.id}</p>
+                     </div>
+@@ -557,4 +566,4 @@ export default function AdminDashboard() {
+       </main>
+     </div>
+   );
+-}
+\ No newline at end of file
++}
+diff --git a/src/pages/ProductDetail.jsx b/src/pages/ProductDetail.jsx
+index 48955f2..d6ba13a 100644
+--- a/src/pages/ProductDetail.jsx
++++ b/src/pages/ProductDetail.jsx
+@@ -202,7 +202,7 @@ export default function ProductDetail() {
+             <div className="flex items-center gap-3">
+               <Truck className="w-4 h-4 text-slate-700 flex-shrink-0" />
+               <span>
+-                Standard delivery within 5–7 business days
++                Estimated delivery time varies by product and shipping route
+                 <strong className="text-slate-900 ml-1">
+                   ({shippingFeeUSD > 0 ? `Shipping: ${shippingFeeLKR}` : 'Free Delivery'})
+                 </strong>
+@@ -216,7 +216,7 @@ export default function ProductDetail() {
+ 
+             <div className="flex items-center gap-3">
+               <Lock className="w-4 h-4 text-slate-700 flex-shrink-0" />
+-              <span>Cash on Delivery Available</span>
++              <span>Payment by bank transfer with receipt verification</span>
+             </div>
+ 
+             <div className="flex items-center gap-3">
+@@ -230,4 +230,4 @@ export default function ProductDetail() {
+       </div>
+     </div>
+   );
+-}
+\ No newline at end of file
++}
+-- 
+2.43.0
+
