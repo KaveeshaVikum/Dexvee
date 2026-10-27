@@ -1,5 +1,6 @@
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { authorizeAdmin } from './utils/admin-auth.js';
 
 if (!getApps().length) {
   initializeApp({
@@ -58,10 +59,8 @@ export const handler = async (event) => {
   }
 
   try {
-    const data = JSON.parse(event.body || '{}');
-    if (!process.env.ADMIN_PASSCODE || data.passcode !== process.env.ADMIN_PASSCODE) {
-      return { statusCode: 401, body: JSON.stringify({ success: false, error: 'Not authorized.' }) };
-    }
+    const authorization = await authorizeAdmin(event);
+    if (!authorization.ok) return authorization.response;
 
     const apiKey = process.env.VITE_CJ_API_TOKEN || process.env.CJ_API_TOKEN;
     if (!apiKey) throw new Error('CJ API Key is missing in Netlify Environment Variables!');

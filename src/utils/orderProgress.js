@@ -25,6 +25,7 @@ export function getOrderProgressState(order) {
     'cancel_requested',
     'cancel_request',
     'cancellation_requested',
+    'cancel_approved',
     'cancelled',
     'canceled',
     'return_requested',

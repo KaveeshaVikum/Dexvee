@@ -1,6 +1,7 @@
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { attemptCjForward } from './place-order.js';
+import { authorizeAdmin } from './utils/admin-auth.js';
 
 if (!getApps().length) {
   initializeApp({
@@ -20,13 +21,10 @@ export const handler = async (event) => {
   }
 
   try {
-    const { orderId, action, passcode } = JSON.parse(event.body);
+    const authorization = await authorizeAdmin(event);
+    if (!authorization.ok) return authorization.response;
 
-    // The dashboard's own login is only a client-side check, so these
-    // functions verify the passcode server-side before touching any order.
-    if (!process.env.ADMIN_PASSCODE || passcode !== process.env.ADMIN_PASSCODE) {
-      return { statusCode: 401, body: JSON.stringify({ success: false, error: 'Not authorized.' }) };
-    }
+    const { orderId, action } = JSON.parse(event.body || '{}');
 
     if (!orderId || !['approve', 'reject'].includes(action)) {
       throw new Error('orderId and a valid action ("approve" or "reject") are required.');

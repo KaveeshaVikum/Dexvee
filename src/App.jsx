@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Truck, Plus, Minus, Trash2, X, ShoppingBag, CreditCard, CheckCircle2, Package, MapPin, Banknote, Edit3, ChevronRight } from 'lucide-react';
 
@@ -6,11 +6,14 @@ import { Truck, Plus, Minus, Trash2, X, ShoppingBag, CreditCard, CheckCircle2, P
 import AccountPage from './AccountPage';
 import AboutUs from './AboutUs';
 import AuthPage from './AuthPage';
-import AdminImporter from "./pages/AdminImporter";
 import ProductPage from './ProductPage';
+import FAQPage from './pages/FAQPage';
+import ShippingReturnsPage from './pages/ShippingReturnsPage';
+import ContactPage from './pages/ContactPage';
 import Header from './components/Header';
 import HomePage from './components/HomePage';
 import SiteFooter from './components/SiteFooter';
+import { STORE } from './data/siteContent';
 
 // Firestore
 import { db, auth } from './firebase';
@@ -31,10 +34,11 @@ export default function App() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [checkoutStep, setCheckoutStep] = useState(1);
   const [orderSuccess, setOrderSuccess] = useState(false);
+  const [priceReviewRequired, setPriceReviewRequired] = useState(false);
   const [isEditingAddress, setIsEditingAddress] = useState(true);
   
   const [toastMsg, setToastMsg] = useState("");
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode] = useState(false);
   const [lkrRate, setLkrRate] = useState(300);
 
   // User & Shipping Profile
@@ -217,6 +221,10 @@ export default function App() {
   const [placingOrder, setPlacingOrder] = useState(false);
 
   const handlePlaceOrder = async () => {
+    if (!bankDetailsConfigured) {
+      setReceiptError('Bank transfer details are not configured yet. Please contact Dexvee before paying.');
+      return;
+    }
     if (paymentMethod === 'BANK_TRANSFER' && !receiptFile) {
       setReceiptError("Please upload your payment receipt before placing the order.");
       return;
@@ -232,30 +240,35 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          items: cart.map((item) => ({
-            id: item.id,
-            name: item.name,
-            image: item.image,
-            vid: item.vid || null,
-            quantity: item.quantity,
-            price: item.price
-          })),
+          items: cart.map((item) => ({ id: item.id, quantity: item.quantity })),
           shippingDetails,
           paymentMethod,
-          subtotal,
-          shippingCost,
-          grandTotal,
-          grandTotalLkr: Math.round(grandTotal * lkrRate * 100) / 100, // what the customer was actually shown
-          lkrRate,
-          // Reuse the exact carrier already quoted at checkout — CJ's order
-          // API requires a logisticName, and it needs to match a route CJ
-          // actually offers, not a guess.
-          shippingCarrier: shippingInfo?.isLiveQuote ? shippingInfo.carrier : null,
+          expectedTotal: Math.round(grandTotal * 100) / 100,
           receiptImageBase64: paymentMethod === 'BANK_TRANSFER' ? receiptFile?.base64 : undefined,
           idToken
         })
       });
       const data = await res.json();
+
+      if (data.code === 'PRICE_CHANGED') {
+        const authoritative = data.authoritative;
+        if (authoritative) {
+          const refreshedItems = new Map((authoritative.items || []).map((item) => [item.id, item]));
+          setCart((current) => current.map((item) => {
+            const updated = refreshedItems.get(item.id);
+            return updated ? { ...item, ...updated } : item;
+          }));
+          setShippingCost(Number(authoritative.shippingCost) || 0);
+          setShippingInfo(authoritative.shippingInfo || null);
+          if (Number.isFinite(authoritative.lkrRate) && authoritative.lkrRate > 0) {
+            setLkrRate(authoritative.lkrRate);
+          }
+        }
+        setPriceReviewRequired(true);
+        showToast("Prices or delivery changed. Review the updated total and submit again.");
+        setPlacingOrder(false);
+        return;
+      }
 
       if (!data.success) {
         showToast(data.error || "Couldn't place order — please try again.");
@@ -265,6 +278,7 @@ export default function App() {
 
       setPlacingOrder(false);
       setOrderSuccess(true);
+      setPriceReviewRequired(false);
       setTimeout(() => {
         setOrderSuccess(false);
         setIsCheckoutOpen(false);
@@ -309,15 +323,13 @@ export default function App() {
     if (cart.length === 0) {
       setShippingCost(0);
       setShippingInfo(null);
+      setShippingLoading(false);
       return;
     }
 
-    // Free shipping over the promo threshold — no need to call the API.
-    if (subtotal > 50) {
-      setShippingCost(0);
-      setShippingInfo(null);
-      return;
-    }
+    // Ask the server for a quote/rate even when free-shipping applies; the
+    // server remains the authority on both the carrier and USD/LKR rate.
+    if (subtotal > 50) setShippingCost(0);
 
     let cancelled = false;
     setShippingLoading(true);
@@ -329,29 +341,32 @@ export default function App() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            items: cart.map((item) => ({ vid: item.vid, quantity: item.quantity })),
-            destCountryCode: 'LK'
+            items: cart.map((item) => ({ id: item.id, quantity: item.quantity }))
           })
         });
         const data = await res.json();
         if (cancelled) return;
 
-        if (data.success) {
-          setShippingCost(data.shippingCost);
+        if (res.ok && data.success) {
+          setShippingCost(subtotal > 50 ? 0 : data.shippingCost);
           setShippingInfo({
-            ...data.breakdown,
+            ...(data.breakdown || {}),
+            carrier: data.carrier || data.breakdown?.carrier || null,
             isLiveQuote: data.isLiveQuote,
-            fallbackReason: data.fallbackReason
+            fallbackReason: data.fallbackReason,
+            quotedShippingCost: data.shippingCost,
+            estimatedItemCount: data.estimatedItemCount
           });
+          if (Number.isFinite(data.lkrRate) && data.lkrRate > 0) setLkrRate(data.lkrRate);
         } else {
           console.error('Shipping calculation failed:', data.error);
-          setShippingCost(3.99); // fallback flat rate if the API call itself fails
+          setShippingCost(subtotal > 50 ? 0 : totalItems * 2.5);
           setShippingInfo(null);
         }
       } catch (err) {
         console.error('Shipping calculation error:', err);
         if (!cancelled) {
-          setShippingCost(3.99);
+          setShippingCost(subtotal > 50 ? 0 : totalItems * 2.5);
           setShippingInfo(null);
         }
       } finally {
@@ -360,9 +375,11 @@ export default function App() {
     }, 500);
 
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [cart, subtotal]);
+  }, [cart, subtotal, totalItems]);
 
   const grandTotal = subtotal + shippingCost;
+  const bankDetailsConfigured = [STORE.bankName, STORE.bankAccountName, STORE.bankAccountNumber, STORE.bankBranch]
+    .every((value) => typeof value === 'string' && value.trim().length > 0);
 
   // Categories come from the real products, so the menus always match the catalog.
   const categories = useMemo(() => {
@@ -412,9 +429,12 @@ export default function App() {
           } />
           <Route path="/product/:id" element={<ProductPage products={products} productsLoading={productsLoading} lkrRate={lkrRate} onAddToCart={addToCart} onBuyNow={handleBuyNow} />} />
           <Route path="/about" element={<AboutUs />} />
+          <Route path="/faq" element={<FAQPage />} />
+          <Route path="/shipping-returns" element={<ShippingReturnsPage />} />
+          <Route path="/returns" element={<ShippingReturnsPage />} />
+          <Route path="/contact" element={<ContactPage />} />
           <Route path="/auth" element={<AuthPage user={user} authReady={authReady} onProfileUpdated={bumpUser} />} />
           <Route path="/account" element={<AccountPage darkMode={darkMode} user={user} authReady={authReady} lkrRate={lkrRate} onProfileUpdated={bumpUser} />} />
-          <Route path="/admin" element={<AdminImporter />} />
         </Routes>
 
         {/* Sidebar Cart */}
@@ -661,12 +681,19 @@ export default function App() {
                             <div>
                               <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Transfer to this account</p>
                               <p className="text-sm mb-3"><span className="text-gray-500">Amount to transfer:</span> <span className="font-black text-gray-900">{formatLKR(grandTotal, lkrRate)}</span></p>
-                              <div className="bg-white border border-gray-200 rounded-xl p-4 text-sm space-y-1">
-                                <p><span className="text-gray-400">Bank:</span> <span className="font-bold text-gray-800">[Your Bank Name]</span></p>
-                                <p><span className="text-gray-400">Account Name:</span> <span className="font-bold text-gray-800">[Your Account Name]</span></p>
-                                <p><span className="text-gray-400">Account Number:</span> <span className="font-bold text-gray-800">[Your Account Number]</span></p>
-                                <p><span className="text-gray-400">Branch:</span> <span className="font-bold text-gray-800">[Your Branch]</span></p>
-                              </div>
+                              {bankDetailsConfigured ? (
+                                <div className="bg-white border border-gray-200 rounded-xl p-4 text-sm space-y-1">
+                                  <p><span className="text-gray-400">Bank:</span> <span className="font-bold text-gray-800">{STORE.bankName}</span></p>
+                                  <p><span className="text-gray-400">Account Name:</span> <span className="font-bold text-gray-800">{STORE.bankAccountName}</span></p>
+                                  <p><span className="text-gray-400">Account Number:</span> <span className="font-bold text-gray-800">{STORE.bankAccountNumber}</span></p>
+                                  <p><span className="text-gray-400">Branch:</span> <span className="font-bold text-gray-800">{STORE.bankBranch}</span></p>
+                                </div>
+                              ) : (
+                                <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs leading-relaxed text-amber-900">
+                                  Bank transfer details are not configured yet. Please do not transfer payment; contact Dexvee at{' '}
+                                  <a className="font-black underline" href={`mailto:${STORE.contactEmail}`}>{STORE.contactEmail}</a>.
+                                </p>
+                              )}
                             </div>
 
                             <div>
@@ -757,6 +784,11 @@ export default function App() {
                   {/* Summary Card */}
                   <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-[#1A0F2E]/10 sticky top-24">
                     <h3 className="text-lg font-black text-gray-800 mb-4">Order Summary</h3>
+                    {priceReviewRequired && (
+                      <p role="status" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+                        Updated server prices and delivery are shown below. The exchange rate is {Number(lkrRate).toFixed(2)} LKR per USD. Please review the items, shipping, and total, then submit again. Your selected receipt is still attached.
+                      </p>
+                    )}
                     
                     <div className="space-y-3 mb-6">
                       <div className="flex justify-between text-sm">
@@ -783,9 +815,9 @@ export default function App() {
 
                     <button 
                       onClick={proceedCheckout} 
-                      disabled={(isEditingAddress && checkoutStep === 1) || placingOrder || (checkoutStep >= 2 && paymentMethod === 'BANK_TRANSFER' && !receiptFile)}
+                      disabled={(isEditingAddress && checkoutStep === 1) || placingOrder || (checkoutStep >= 2 && paymentMethod === 'BANK_TRANSFER' && (!receiptFile || !bankDetailsConfigured))}
                       className={`w-full py-4 rounded-2xl font-black text-sm tracking-widest uppercase transition-all shadow-lg flex items-center justify-center gap-2 ${
-                        (isEditingAddress && checkoutStep === 1) || placingOrder || (checkoutStep >= 2 && paymentMethod === 'BANK_TRANSFER' && !receiptFile)
+                        (isEditingAddress && checkoutStep === 1) || placingOrder || (checkoutStep >= 2 && paymentMethod === 'BANK_TRANSFER' && (!receiptFile || !bankDetailsConfigured))
                         ? 'bg-gray-200 text-gray-400 cursor-not-allowed' 
                         : 'bg-[#1A0F2E] hover:bg-[#0D0717] text-white hover:-translate-y-1 hover:shadow-cyan-500/20'
                       }`}

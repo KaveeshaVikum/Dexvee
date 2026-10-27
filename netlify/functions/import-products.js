@@ -1,5 +1,6 @@
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { authorizeAdmin } from './utils/admin-auth.js';
 
 // Initialize Firebase Admin securely
 if (!getApps().length) {
@@ -97,11 +98,10 @@ export const handler = async (event) => {
   }
 
   try {
-    const data = JSON.parse(event.body);
+    const authorization = await authorizeAdmin(event);
+    if (!authorization.ok) return authorization.response;
 
-    if (!process.env.ADMIN_PASSCODE || data.passcode !== process.env.ADMIN_PASSCODE) {
-      return { statusCode: 401, body: JSON.stringify({ success: false, error: 'Not authorized.' }) };
-    }
+    const data = JSON.parse(event.body || '{}');
 
     const rawInput = data.cjProductId;
 

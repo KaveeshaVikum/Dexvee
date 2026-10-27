@@ -27,7 +27,7 @@ export const BANNERS = [
     title: 'Overseas delivery takes a little time',
     subtitle: 'Orders ship from our international suppliers. Follow your order any time in your account.',
     cta: 'My orders',
-    link: '/account',
+    link: '/account?tab=orders',
     gradient: 'from-[#1A0F2E] via-[#4C1D95] to-indigo-500'
   }
 ];
@@ -36,10 +36,14 @@ export const BANNERS = [
 export const STORE = {
   name: 'Dexvee',
   tagline: 'The Future of Shopping',
-  contactEmail: '',
+  contactEmail: 'dexveeshop@gmail.com',
   contactPhone: '',
   whatsapp: '',      // digits only with country code, e.g. 94771234567
   facebookUrl: '',   // e.g. https://facebook.com/yourpage
   instagramUrl: '',
+  bankName: '',
+  bankAccountName: '',
+  bankAccountNumber: '',
+  bankBranch: '',
   freeShippingOverUsd: 50 // must match the free-shipping rule used at checkout
 };

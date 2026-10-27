@@ -1,5 +1,6 @@
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { authorizeAdmin } from './utils/admin-auth.js';
 
 if (!getApps().length) {
   initializeApp({
@@ -16,17 +17,15 @@ const db = getFirestore();
 // Returns bank-transfer orders waiting for a payment check, with their
 // receipt images. Orders contain customers' names, phones and addresses, so
 // Firestore rules keep the orders collection closed to the browser and this
-// function (passcode-protected) is the only way the dashboard can read them.
+// function (Firebase-ID-token protected) is the only way the dashboard can read them.
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
   try {
-    const { passcode } = JSON.parse(event.body || '{}');
-    if (!process.env.ADMIN_PASSCODE || passcode !== process.env.ADMIN_PASSCODE) {
-      return { statusCode: 401, body: JSON.stringify({ success: false, error: 'Not authorized.' }) };
-    }
+    const authorization = await authorizeAdmin(event);
+    if (!authorization.ok) return authorization.response;
 
     // Single-field filter only, so no composite index is needed; sorted below.
     const snapshot = await db.collection('orders').where('paymentStatus', '==', 'pending_verification').get();

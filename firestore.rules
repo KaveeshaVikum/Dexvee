@@ -17,6 +17,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Published product reviews are public to read; only backend functions write them.
+    match /productReviews/{reviewId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Everything else (including orderReceipts and settings) stays closed.
     match /{document=**} {
       allow read, write: if false;

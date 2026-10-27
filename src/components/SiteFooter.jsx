@@ -1,4 +1,3 @@
-import React from 'react';
 import { Link } from 'react-router-dom';
 import { Truck, Banknote, Package, ShieldCheck, Mail, Phone } from 'lucide-react';
 import { STORE } from '../data/siteContent';
@@ -57,8 +56,11 @@ export default function SiteFooter({ categories }) {
           <div>
             <h4 className="text-xs font-black uppercase tracking-widest text-white mb-3">Help</h4>
             <ul className="space-y-2 text-sm">
-              <li><Link to="/account" className="hover:text-cyan-400 transition-colors">Track My Order</Link></li>
+              <li><Link to="/account?tab=orders" className="hover:text-cyan-400 transition-colors">Track My Order</Link></li>
               <li><Link to="/account" className="hover:text-cyan-400 transition-colors">My Account</Link></li>
+              <li><Link to="/faq" className="hover:text-cyan-400 transition-colors">FAQs</Link></li>
+              <li><Link to="/shipping-returns" className="hover:text-cyan-400 transition-colors">Shipping & Returns</Link></li>
+              <li><Link to="/contact" className="hover:text-cyan-400 transition-colors">Contact Us</Link></li>
               <li><Link to="/about" className="hover:text-cyan-400 transition-colors">About Us</Link></li>
             </ul>
           </div>

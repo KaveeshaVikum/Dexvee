@@ -1,17 +1,72 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { 
-  Lock, Key, Zap, PackagePlus, Link as LinkIcon, Download, 
-  Trash2, Plus, LogOut, LayoutDashboard, FileJson, AlertCircle, 
+  Lock, Mail, Zap, PackagePlus, Download,
+  Trash2, Plus, LogOut, LayoutDashboard, AlertCircle,
   RefreshCw, Eye, DollarSign, Users, TrendingUp, Check, X, Banknote 
 } from 'lucide-react';
-import { db } from '../firebase';
+import { signInWithEmailAndPassword, signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth';
+import { auth, googleProvider, db } from '../firebase';
 import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { getUsdToLkrRate, formatLKR } from '../utils/currency';
+import AdminOrdersPanel from './AdminOrdersPanel';
+
+async function getAdminHeaders(user = auth.currentUser) {
+  if (!user) throw new Error('Sign in again to continue.');
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${await user.getIdToken()}`
+  };
+}
 
 export default function AdminDashboard() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [adminUser, setAdminUser] = useState(null);
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!active) return;
+      setAdminUser(user);
+      if (!user) {
+        setIsAuthenticated(false);
+        setAuthChecking(false);
+        return;
+      }
+
+      setAuthChecking(true);
+      try {
+        const response = await fetch('/.netlify/functions/admin-check', {
+          method: 'POST',
+          headers: await getAdminHeaders(user)
+        });
+        const data = await response.json();
+        if (!active) return;
+        if (response.ok && data.success) {
+          setIsAuthenticated(true);
+          setAuthError('');
+        } else {
+          setIsAuthenticated(false);
+          setAuthError(data.error || 'This Firebase account is not authorized for admin access.');
+        }
+      } catch {
+        if (active) {
+          setIsAuthenticated(false);
+          setAuthError('Could not verify admin access. Check the Netlify admin configuration and try again.');
+        }
+      } finally {
+        if (active) setAuthChecking(false);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(true);
@@ -67,6 +122,7 @@ export default function AdminDashboard() {
     return () => unsubscribe();
   }, []);
 
+  const [dashboardTab, setDashboardTab] = useState('overview');
   const [activeTab, setActiveTab] = useState("url");
   const [externalUrl, setExternalUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -86,14 +142,35 @@ export default function AdminDashboard() {
     setTimeout(() => setStatusMsg({ type: '', text: '' }), 4000);
   };
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    if (password === "admin123") {
-      setIsAuthenticated(true);
-      setAuthError("");
-    } else {
-      setAuthError("Incorrect Admin Passcode.");
+    setAuthError('');
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+      setPassword('');
+    } catch (err) {
+      setAuthError(err?.code === 'auth/invalid-credential'
+        ? 'The email or password is incorrect.'
+        : 'Could not sign in. Check the account details and try again.');
     }
+  };
+
+  const handleGoogleLogin = async () => {
+    setAuthError('');
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      if (err?.code !== 'auth/popup-closed-by-user' && err?.code !== 'auth/cancelled-popup-request') {
+        setAuthError('Google sign-in failed. Please try again.');
+      }
+    }
+  };
+
+  const handleSignOut = async () => {
+    await signOut(auth);
+    setIsAuthenticated(false);
+    setAdminUser(null);
+    setAuthError('');
   };
 
   const calculatePricing = (baseCost) => {
@@ -121,7 +198,7 @@ export default function AdminDashboard() {
       // FIXED: Endpoint changed to match plural 'import-products'
       const res = await fetch('/.netlify/functions/import-products', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getAdminHeaders(),
         body: JSON.stringify({ 
           cjProductId: externalUrl, 
           customCategory: 'Gadgets' 
@@ -138,7 +215,7 @@ export default function AdminDashboard() {
       } else {
         showStatus('error', data.error || 'Failed to import product from backend.');
       }
-    } catch (err) {
+    } catch {
       showStatus('error', 'Network error connecting to Netlify function.');
     } finally {
       setLoading(false);
@@ -153,7 +230,7 @@ export default function AdminDashboard() {
     try {
       const res = await fetch('/.netlify/functions/manage-products', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getAdminHeaders(),
         body: JSON.stringify({ action: 'add', ...manualItem, markupPercent })
       });
       const data = await res.json();
@@ -166,7 +243,7 @@ export default function AdminDashboard() {
       } else {
         showStatus('error', data.error || 'Failed to add product.');
       }
-    } catch (err) {
+    } catch {
       showStatus('error', 'Network error connecting to Netlify function.');
     } finally {
       setLoading(false);
@@ -177,7 +254,7 @@ export default function AdminDashboard() {
     try {
       const res = await fetch('/.netlify/functions/manage-products', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getAdminHeaders(),
         body: JSON.stringify({ action: 'delete', id })
       });
       const data = await res.json();
@@ -188,7 +265,7 @@ export default function AdminDashboard() {
       } else {
         showStatus('error', data.error || 'Failed to remove product.');
       }
-    } catch (err) {
+    } catch {
       showStatus('error', 'Network error connecting to Netlify function.');
     }
   };
@@ -201,14 +278,17 @@ export default function AdminDashboard() {
   const handleBackfillShipping = async () => {
     setBackfilling(true);
     try {
-      const res = await fetch('/.netlify/functions/backfill-vid', { method: 'POST' });
+      const res = await fetch('/.netlify/functions/backfill-vid', {
+        method: 'POST',
+        headers: await getAdminHeaders()
+      });
       const data = await res.json();
       if (data.success) {
         showStatus('success', data.message);
       } else {
         showStatus('error', data.error || 'Backfill failed.');
       }
-    } catch (err) {
+    } catch {
       showStatus('error', 'Network error connecting to Netlify function.');
     } finally {
       setBackfilling(false);
@@ -217,7 +297,7 @@ export default function AdminDashboard() {
 
   // --- Bank transfer payments waiting for review ---
   // Orders hold customers' personal details, so the browser can't read them
-  // from Firestore directly; these go through passcode-protected functions.
+  // from Firestore directly; these go through Firebase-authenticated functions.
   const [pendingPayments, setPendingPayments] = useState([]);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [reviewingId, setReviewingId] = useState(null);
@@ -228,8 +308,8 @@ export default function AdminDashboard() {
     try {
       const res = await fetch('/.netlify/functions/get-pending-payments', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode: password })
+        headers: await getAdminHeaders(),
+        body: JSON.stringify({})
       });
       const data = await res.json();
       if (data.success) {
@@ -237,7 +317,7 @@ export default function AdminDashboard() {
       } else {
         showStatus('error', data.error || 'Could not load pending payments.');
       }
-    } catch (err) {
+    } catch {
       showStatus('error', 'Network error loading pending payments.');
     } finally {
       setPendingLoading(false);
@@ -257,8 +337,8 @@ export default function AdminDashboard() {
     try {
       const res = await fetch('/.netlify/functions/review-payment', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, action, passcode: password })
+        headers: await getAdminHeaders(),
+        body: JSON.stringify({ orderId, action })
       });
       const data = await res.json();
       if (data.success) {
@@ -274,7 +354,7 @@ export default function AdminDashboard() {
       } else {
         showStatus('error', data.error || 'Review failed.');
       }
-    } catch (err) {
+    } catch {
       showStatus('error', 'Network error while reviewing payment.');
     } finally {
       setReviewingId(null);
@@ -285,6 +365,9 @@ export default function AdminDashboard() {
   const myShare = totalStoreProfit / 2;
 
   if (!isAuthenticated) {
+    if (authChecking) {
+      return <div className="min-h-screen bg-[#070A0F] text-white flex items-center justify-center p-6">Checking admin access…</div>;
+    }
     return (
       <div className="min-h-screen bg-[#070A0F] text-white flex items-center justify-center p-6 font-sans">
         <div className="w-full max-w-md bg-[#0B0F19] border border-white/10 rounded-3xl p-8 shadow-2xl">
@@ -294,26 +377,51 @@ export default function AdminDashboard() {
             </div>
           </div>
           <h1 className="text-2xl font-black uppercase mb-2">Dexvee Admin Portal</h1>
-          <p className="text-xs text-gray-400 mb-6">Restricted access for store managers.</p>
+          <p className="text-xs text-gray-400 mb-6">Sign in with an approved Firebase account. Access is verified securely on the server.</p>
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="text-xs font-bold uppercase text-gray-400 block mb-1">Passcode</label>
+              <label className="text-xs font-bold uppercase text-gray-400 block mb-1">Email address</label>
               <div className="relative">
-                <input 
-                  type="password" 
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter passcode" 
+                <input
+                  type="email"
+                  autoComplete="username"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="admin@example.com"
                   className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm outline-none focus:border-[#00F2FE]"
                 />
-                <Key className="w-4 h-4 text-gray-500 absolute left-3.5 top-3.5" />
+                <Mail className="w-4 h-4 text-gray-500 absolute left-3.5 top-3.5" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-bold uppercase text-gray-400 block mb-1">Password</label>
+              <div className="relative">
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Firebase account password"
+                  className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm outline-none focus:border-[#00F2FE]"
+                />
+                <Lock className="w-4 h-4 text-gray-500 absolute left-3.5 top-3.5" />
               </div>
             </div>
             {authError && <p className="text-xs text-red-400 font-bold">{authError}</p>}
             <button type="submit" className="w-full bg-gradient-to-r from-[#635BFF] to-[#00F2FE] text-black font-black py-3.5 rounded-full uppercase text-xs">
-              Access Portal
+              Sign in to Admin
             </button>
           </form>
+          <button type="button" onClick={handleGoogleLogin} className="w-full mt-3 py-3 rounded-full border border-white/15 text-white text-xs font-bold hover:bg-white/5">
+            Continue with Google
+          </button>
+          {adminUser && (
+            <button type="button" onClick={handleSignOut} className="w-full mt-3 text-xs text-gray-400 hover:text-white">
+              Sign out of {adminUser.email}
+            </button>
+          )}
         </div>
       </div>
     );
@@ -350,13 +458,24 @@ export default function AdminDashboard() {
           <a href="/" target="_blank" rel="noreferrer" className="text-xs font-bold text-gray-300 hover:text-white flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/10 hover:bg-white/5">
             <Eye className="w-3.5 h-3.5 text-[#00F2FE]" /> View Store
           </a>
-          <button onClick={() => setIsAuthenticated(false)} className="text-xs font-bold text-gray-400 hover:text-white flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/10 hover:bg-white/5">
+          <button onClick={handleSignOut} className="text-xs font-bold text-gray-400 hover:text-white flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/10 hover:bg-white/5">
             <LogOut className="w-3.5 h-3.5" /> Sign Out
           </button>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
+        <nav className="flex gap-2 mb-6" aria-label="Admin sections">
+          <button type="button" onClick={() => setDashboardTab('overview')} aria-pressed={dashboardTab === 'overview'} className={`px-5 py-2.5 rounded-full text-xs font-black uppercase tracking-wide transition-colors ${dashboardTab === 'overview' ? 'bg-[#635BFF] text-white' : 'border border-white/10 text-gray-400 hover:text-white'}`}>
+            Catalog & Payments
+          </button>
+          <button type="button" onClick={() => setDashboardTab('orders')} aria-pressed={dashboardTab === 'orders'} className={`px-5 py-2.5 rounded-full text-xs font-black uppercase tracking-wide transition-colors ${dashboardTab === 'orders' ? 'bg-[#635BFF] text-white' : 'border border-white/10 text-gray-400 hover:text-white'}`}>
+            Orders
+          </button>
+        </nav>
+
+        {dashboardTab === 'orders' ? <AdminOrdersPanel /> : (
+          <>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-[#0B0F19] border border-white/10 rounded-2xl p-5 flex items-center gap-4">
             <div className="p-3 bg-[#635BFF]/10 text-[#635BFF] rounded-xl"><TrendingUp className="w-6 h-6" /></div>
@@ -477,6 +596,8 @@ export default function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
+                  {productsLoading && <tr><td colSpan={6} className="py-8 text-center text-gray-500">Loading products…</td></tr>}
+                  {!productsLoading && products.length === 0 && <tr><td colSpan={6} className="py-8 text-center text-gray-500">No products in the catalog yet.</td></tr>}
                   {products.map((p) => (
                     <tr key={p.id}>
                       <td className="py-3 font-bold text-white flex items-center gap-2">
@@ -553,6 +674,8 @@ export default function AdminDashboard() {
           <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6" onClick={() => setZoomedReceipt(null)}>
             <img src={zoomedReceipt} alt="Receipt" className="max-h-full max-w-full rounded-xl" />
           </div>
+        )}
+          </>
         )}
       </main>
     </div>

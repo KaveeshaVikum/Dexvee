@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Menu, Search, ShoppingCart, User, X, ChevronRight, Home, LayoutGrid } from 'lucide-react';
 import { formatLKR } from '../utils/currency';
@@ -98,7 +98,9 @@ export default function Header({ user, totalItems, onOpenCart, products, categor
           </span>
           <div className="flex items-center gap-5">
             <Link to="/about" className="hover:text-cyan-400 transition-colors">About Us</Link>
-            <Link to="/account" className="hover:text-cyan-400 transition-colors">Track Order</Link>
+            <Link to="/faq" className="hover:text-cyan-400 transition-colors">FAQs</Link>
+            <Link to="/shipping-returns" className="hover:text-cyan-400 transition-colors">Shipping & Returns</Link>
+            <Link to="/account?tab=orders" className="hover:text-cyan-400 transition-colors">Track Order</Link>
           </div>
         </div>
       </div>
@@ -221,8 +223,17 @@ export default function Header({ user, totalItems, onOpenCart, products, categor
               ))}
 
               <p className="px-5 pt-6 pb-2 text-[11px] font-black text-gray-400 uppercase tracking-widest">Help</p>
-              <Link to="/account" className="flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50">
+              <Link to="/account?tab=orders" className="flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50">
                 Track My Order <ChevronRight className="w-4 h-4 text-gray-300" />
+              </Link>
+              <Link to="/faq" className="flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50">
+                FAQs <ChevronRight className="w-4 h-4 text-gray-300" />
+              </Link>
+              <Link to="/shipping-returns" className="flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50">
+                Shipping & Returns <ChevronRight className="w-4 h-4 text-gray-300" />
+              </Link>
+              <Link to="/contact" className="flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50">
+                Contact Us <ChevronRight className="w-4 h-4 text-gray-300" />
               </Link>
               <Link to="/about" className="flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50">
                 About Us <ChevronRight className="w-4 h-4 text-gray-300" />

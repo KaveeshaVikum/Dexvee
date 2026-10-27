@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Star, Truck, Banknote, Package, Plus, Minus, ChevronLeft, ChevronRight } from 'lucide-react';
 import ProductCard from './components/ProductCard';
+import ProductReviews from './components/ProductReviews';
 import { formatLKR } from './utils/currency';
 
 // Remembers delivery quotes already fetched this visit, so flicking between
@@ -13,6 +14,7 @@ const DEFAULT_DESCRIPTION = 'Imported and ready to ship.';
 
 export default function ProductPage({ products, productsLoading, lkrRate, onAddToCart, onBuyNow }) {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const product = products.find((p) => String(p.id) === String(id));
 
   const [activeImage, setActiveImage] = useState(0);
@@ -26,16 +28,15 @@ export default function ProductPage({ products, productsLoading, lkrRate, onAddT
     window.scrollTo({ top: 0 });
   }, [id]);
 
-  // Delivery estimate for this product from the shipping service. Only for
-  // products that have a supplier variant id — others can't be quoted.
+  // The server looks up each product's authoritative variant ID and price.
   useEffect(() => {
-    if (!product?.vid) {
+    if (!product?.id) {
       setShippingEstimate(null);
       setShippingLoading(false);
       return undefined;
     }
 
-    const key = `${product.vid}:${quantity}`;
+    const key = `${product.id}:${quantity}`;
     if (shippingCache.has(key)) {
       setShippingEstimate(shippingCache.get(key));
       setShippingLoading(false);
@@ -50,7 +51,7 @@ export default function ProductPage({ products, productsLoading, lkrRate, onAddT
         const res = await fetch('/.netlify/functions/calculate-shipping', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: [{ vid: product.vid, quantity }], destCountryCode: 'LK' })
+          body: JSON.stringify({ items: [{ id: product.id, quantity }] })
         });
         const data = await res.json();
         if (cancelled) return;
@@ -64,7 +65,7 @@ export default function ProductPage({ products, productsLoading, lkrRate, onAddT
           : null;
         shippingCache.set(key, estimate);
         setShippingEstimate(estimate);
-      } catch (err) {
+      } catch {
         if (!cancelled) setShippingEstimate(null);
       } finally {
         if (!cancelled) setShippingLoading(false);
@@ -72,7 +73,7 @@ export default function ProductPage({ products, productsLoading, lkrRate, onAddT
     }, 300);
 
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [product?.vid, quantity]);
+  }, [product?.id, quantity]);
 
   if (!product) {
     if (productsLoading) {
@@ -223,6 +224,8 @@ export default function ProductPage({ products, productsLoading, lkrRate, onAddT
           <p className="text-sm text-gray-600 leading-relaxed whitespace-pre-line">{product.description}</p>
         </section>
       )}
+
+      <ProductReviews productId={product.id} requestedOrderId={searchParams.get('reviewOrder') || ''} />
 
       {related.length > 0 && (
         <section className="mt-6">

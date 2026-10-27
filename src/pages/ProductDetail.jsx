@@ -211,7 +211,7 @@ export default function ProductDetail() {
 
             <div className="flex items-center gap-3">
               <ShieldCheck className="w-4 h-4 text-slate-700 flex-shrink-0" />
-              <span>14 days easy return</span>
+              <span>Return requests reviewed by Dexvee</span>
             </div>
 
             <div className="flex items-center gap-3">

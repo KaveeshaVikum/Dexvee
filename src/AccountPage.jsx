@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   User, Package, MapPin, Shield, LogOut, ChevronRight, ExternalLink,
   CreditCard, PackageCheck, Truck, Star, RotateCcw
@@ -32,12 +32,15 @@ const ORDER_FILTERS = [
 
 export default function AccountPage({ darkMode, user, authReady, lkrRate, onProfileUpdated }) {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('profile');
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState(requestedTab || 'profile');
   const [orderFilter, setOrderFilter] = useState('all');
 
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [ordersError, setOrdersError] = useState('');
+  const [orderActionMessages, setOrderActionMessages] = useState({});
 
   const [displayName, setDisplayName] = useState('');
   const [profileMsg, setProfileMsg] = useState({ type: '', text: '' });
@@ -50,6 +53,10 @@ export default function AccountPage({ darkMode, user, authReady, lkrRate, onProf
   useEffect(() => {
     setDisplayName(user?.displayName || '');
   }, [user]);
+
+  useEffect(() => {
+    if (TABS.some((tab) => tab.id === requestedTab)) setActiveTab(requestedTab);
+  }, [requestedTab]);
 
   // Live-updates, so a status change (e.g. payment approved) shows up
   // without the customer refreshing. Firestore rules only let a signed-in
@@ -149,6 +156,32 @@ export default function AccountPage({ darkMode, user, authReady, lkrRate, onProf
       setPwMsg({ type: 'error', text: wrong ? 'Your current password is incorrect.' : 'Couldn\'t update your password. Please try again.' });
     } finally {
       setSavingPw(false);
+    }
+  };
+
+  const submitOrderAction = async (order, action) => {
+    const prompt = action === 'cancel'
+      ? 'Tell us why you want to cancel this order request:'
+      : 'Tell us why you want to request a return:';
+    const reason = window.prompt(prompt);
+    if (!reason?.trim()) return;
+
+    setOrderActionMessages((current) => ({ ...current, [order.id]: '' }));
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const response = await fetch('/.netlify/functions/request-order-action', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ orderId: order.id, action, reason: reason.trim() })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'The request could not be submitted.');
+      setOrderActionMessages((current) => ({ ...current, [order.id]: 'Your request was sent for review. The order status will update here.' }));
+    } catch (err) {
+      setOrderActionMessages((current) => ({ ...current, [order.id]: err.message || 'Could not submit your request. Please try again.' }));
     }
   };
 
@@ -328,6 +361,13 @@ export default function AccountPage({ darkMode, user, authReady, lkrRate, onProf
                     <div className="space-y-5">
                       {visibleOrders.map((order) => {
                         const progress = getOrderProgressState(order);
+                        const orderStatus = String(order.status || '').toLowerCase();
+                        const hasCustomerRequest = Boolean(order.customerRequestStatus);
+                        const isDelivered = ['delivered', 'complete', 'completed'].includes(orderStatus);
+                        const canRequestCancel = ['placed', 'processing', 'ready_to_ship'].includes(orderStatus) && !hasCustomerRequest;
+                        const canRequestReturn = isDelivered && !hasCustomerRequest;
+                        const reviewedProductIds = new Set(Array.isArray(order.reviewedProductIds) ? order.reviewedProductIds : []);
+                        const reviewableItems = (order.items || []).filter((item) => item.id && !reviewedProductIds.has(item.id));
                         const rate = order.lkrRate || lkrRate;
                         const placed = order.createdAt?.toDate ? order.createdAt.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
                         return (
@@ -370,6 +410,35 @@ export default function AccountPage({ darkMode, user, authReady, lkrRate, onProf
                                 </div>
                               ))}
                               <OrderProgressMap order={order} darkMode={darkMode} progress={progress} />
+                              {order.adminNote && (
+                                <p className={`rounded-xl border px-4 py-3 text-xs leading-relaxed ${darkMode ? 'border-violet-300/15 bg-violet-300/5 text-violet-100' : 'border-violet-200 bg-violet-50 text-violet-900'}`}>
+                                  <span className="font-black">Update from Dexvee: </span>{order.adminNote}
+                                </p>
+                              )}
+                              {orderActionMessages[order.id] && (
+                                <p role="status" className={`rounded-xl border px-4 py-3 text-xs font-bold ${orderActionMessages[order.id].startsWith('Your request') ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                                  {orderActionMessages[order.id]}
+                                </p>
+                              )}
+                              {(canRequestCancel || canRequestReturn || (isDelivered && reviewableItems.length > 0)) && (
+                                <div className="flex flex-wrap gap-2">
+                                  {canRequestCancel && (
+                                    <button type="button" onClick={() => submitOrderAction(order, 'cancel')} className={`rounded-full border px-4 py-2 text-xs font-black transition-colors ${darkMode ? 'border-white/15 text-slate-200 hover:bg-white/5' : 'border-slate-300 text-slate-700 hover:bg-white'}`}>
+                                      Request cancellation
+                                    </button>
+                                  )}
+                                  {canRequestReturn && (
+                                    <button type="button" onClick={() => submitOrderAction(order, 'return')} className={`rounded-full border px-4 py-2 text-xs font-black transition-colors ${darkMode ? 'border-white/15 text-slate-200 hover:bg-white/5' : 'border-slate-300 text-slate-700 hover:bg-white'}`}>
+                                      Request a return
+                                    </button>
+                                  )}
+                                  {isDelivered && reviewableItems.map((item) => (
+                                    <Link key={item.id} to={`/product/${item.id}?reviewOrder=${encodeURIComponent(order.id)}`} className="rounded-full bg-[#1A0F2E] px-4 py-2 text-xs font-black text-white hover:bg-fuchsia-600">
+                                      Review {item.name || 'item'}
+                                    </Link>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           </article>
                         );
