@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   User, Package, MapPin, Shield, LogOut, ChevronRight, ExternalLink,
-  CheckCircle2, Clock, XCircle
+  CreditCard, PackageCheck, Truck, Star, RotateCcw
 } from 'lucide-react';
 import {
   signOut, updateProfile, EmailAuthProvider,
@@ -11,34 +11,29 @@ import {
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { formatLKR } from './utils/currency';
+import OrderProgressMap from './components/OrderProgressMap';
+import { getOrderProgressState } from './utils/orderProgress';
 
 const TABS = [
   { id: 'profile', label: 'My Profile', icon: User },
-  { id: 'orders', label: 'Order History', icon: Package },
+  { id: 'orders', label: 'My Orders', icon: Package },
   { id: 'address', label: 'Last Address', icon: MapPin },
   { id: 'security', label: 'Security', icon: Shield },
 ];
 
-// What the customer sees. Deliberately says nothing about suppliers.
-function getOrderStatus(order) {
-  if (order.paymentStatus === 'pending_verification') {
-    return { label: 'Awaiting payment check', tone: 'amber', icon: Clock, note: 'We verify bank transfers within 3 business days.' };
-  }
-  if (order.paymentStatus === 'rejected') {
-    return { label: 'Payment not verified', tone: 'red', icon: XCircle, note: 'We couldn\'t match your transfer. Please contact us so we can sort it out.' };
-  }
-  return { label: 'Payment confirmed', tone: 'emerald', icon: CheckCircle2, note: 'Your order is being prepared. International delivery can take a few weeks.' };
-}
-
-const TONES = {
-  amber: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
-  red: 'bg-red-500/10 text-red-500 border-red-500/20',
-  emerald: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
-};
+const ORDER_FILTERS = [
+  { id: 'all', label: 'All orders', icon: Package },
+  { id: 'toPay', label: 'To Pay', icon: CreditCard },
+  { id: 'toShip', label: 'To Ship', icon: PackageCheck },
+  { id: 'toReceive', label: 'To Receive', icon: Truck },
+  { id: 'toReview', label: 'To Review', icon: Star },
+  { id: 'returns', label: 'Returns & Cancellations', icon: RotateCcw },
+];
 
 export default function AccountPage({ darkMode, user, authReady, lkrRate, onProfileUpdated }) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('profile');
+  const [orderFilter, setOrderFilter] = useState('all');
 
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
@@ -94,6 +89,15 @@ export default function AccountPage({ darkMode, user, authReady, lkrRate, onProf
     .join(', ');
   const initial = (user.displayName || user.email || '?').charAt(0).toUpperCase();
   const lastOrder = orders[0];
+  const orderCounts = orders.reduce((counts, order) => {
+    const { bucket } = getOrderProgressState(order);
+    counts.all += 1;
+    if (bucket !== 'all') counts[bucket] = (counts[bucket] || 0) + 1;
+    return counts;
+  }, { all: 0, toPay: 0, toShip: 0, toReceive: 0, toReview: 0, returns: 0 });
+  const visibleOrders = orderFilter === 'all'
+    ? orders
+    : orders.filter((order) => getOrderProgressState(order).bucket === orderFilter);
 
   const handleSignOut = async () => {
     await signOut(auth);
@@ -249,67 +253,125 @@ export default function AccountPage({ darkMode, user, authReady, lkrRate, onProf
 
               {activeTab === 'orders' && (
                 <div>
-                  <h2 className="text-2xl font-black uppercase mb-2">Order History</h2>
-                  <p className={`text-sm mb-8 ${muted}`}>Orders placed while you were signed in. Orders placed as a guest or before you signed up won't appear here.</p>
+                  <div className="mb-7">
+                    <h2 className="text-2xl font-black uppercase mb-2">My Orders</h2>
+                    <p className={`text-sm ${muted}`}>Follow every order from payment check to delivery, with live updates from your account.</p>
+                  </div>
+
+                  <div className="relative mb-7 overflow-hidden rounded-3xl bg-gradient-to-br from-[#1A0F2E] via-[#281746] to-[#402669] px-6 py-7 text-white shadow-lg sm:px-8">
+                    <div className="pointer-events-none absolute -right-8 -top-20 h-64 w-64 rounded-full border border-white/10" />
+                    <div className="pointer-events-none absolute -right-1 -top-12 h-48 w-48 rounded-full border border-white/10" />
+                    <div className="relative flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+                      <div className="max-w-lg">
+                        <p className="text-[10px] font-black uppercase tracking-[0.22em] text-violet-200">Your order board</p>
+                        <h3 className="mt-2 text-2xl font-black leading-tight sm:text-3xl">Every order. <span className="text-violet-200">One clear journey.</span></h3>
+                        <p className="mt-2 max-w-md text-sm leading-relaxed text-white/70">See what needs attention and where each parcel is in its journey.</p>
+                      </div>
+                      <div className="flex shrink-0 gap-3">
+                        <div className="min-w-[106px] rounded-2xl border border-white/15 bg-white/10 px-4 py-3 backdrop-blur-sm">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-white/60">All orders</p>
+                          <p className="mt-1 text-2xl font-black">{ordersLoading ? '—' : orderCounts.all}</p>
+                        </div>
+                        <div className="min-w-[106px] rounded-2xl border border-white/15 bg-white/10 px-4 py-3 backdrop-blur-sm">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-white/60">In progress</p>
+                          <p className="mt-1 text-2xl font-black">{ordersLoading ? '—' : orderCounts.toPay + orderCounts.toShip + orderCounts.toReceive}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <nav className="mb-7 -mx-2 flex gap-2 overflow-x-auto px-2 pb-2 [scrollbar-width:thin]" aria-label="Filter orders" role="group">
+                    {ORDER_FILTERS.map((filter) => {
+                      const Icon = filter.icon;
+                      const selected = orderFilter === filter.id;
+                      return (
+                        <button
+                          key={filter.id}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => setOrderFilter(filter.id)}
+                          className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-4 py-2.5 text-xs font-black transition-all ${selected
+                            ? 'border-[#1A0F2E] bg-[#1A0F2E] text-white shadow-md'
+                            : darkMode
+                              ? 'border-white/10 bg-white/[0.03] text-slate-300 hover:border-white/20 hover:bg-white/[0.07]'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'}`}>
+                          <Icon className="h-4 w-4" />
+                          <span>{filter.label}</span>
+                          <span className={`min-w-5 rounded-full px-1.5 py-0.5 text-[10px] ${selected ? 'bg-white/15 text-white' : darkMode ? 'bg-white/10 text-slate-300' : 'bg-slate-100 text-slate-500'}`}>
+                            {ordersLoading ? '—' : orderCounts[filter.id]}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </nav>
 
                   {ordersLoading ? (
-                    <p className={`text-sm font-bold ${muted}`}>Loading your orders…</p>
+                    <div className={`rounded-2xl border p-8 text-center text-sm font-bold ${darkMode ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-slate-50'} ${muted}`}>Loading your orders…</div>
                   ) : ordersError ? (
-                    <p className="text-sm font-bold text-red-500">{ordersError}</p>
+                    <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 text-sm font-bold text-red-500">{ordersError}</div>
                   ) : orders.length === 0 ? (
-                    <div className="text-center py-16">
-                      <Package className="w-12 h-12 mx-auto mb-4 text-gray-500 opacity-50" />
-                      <p className={`font-bold mb-4 ${muted}`}>You haven't placed any orders yet.</p>
-                      <Link to="/" className="inline-block px-6 py-3 bg-[#1A0F2E] text-white rounded-full text-xs font-black uppercase tracking-wider">Start Shopping</Link>
+                    <div className={`rounded-3xl border px-6 py-14 text-center ${darkMode ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-slate-50'}`}>
+                      <span className={`mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl ${darkMode ? 'bg-white/5 text-violet-200' : 'bg-[#1A0F2E]/5 text-[#1A0F2E]'}`}><Package className="h-7 w-7" /></span>
+                      <h3 className="font-black">Your next favorite find starts here.</h3>
+                      <p className={`mt-2 mb-5 text-sm ${muted}`}>Orders placed while signed in will appear here with their progress.</p>
+                      <Link to="/" className="inline-flex items-center rounded-full bg-[#1A0F2E] px-6 py-3 text-xs font-black uppercase tracking-wider text-white">Start Shopping</Link>
+                    </div>
+                  ) : visibleOrders.length === 0 ? (
+                    <div className={`rounded-3xl border px-6 py-14 text-center ${darkMode ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-slate-50'}`}>
+                      <span className={`mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl ${darkMode ? 'bg-white/5 text-violet-200' : 'bg-[#1A0F2E]/5 text-[#1A0F2E]'}`}>
+                        {(() => { const EmptyIcon = ORDER_FILTERS.find((item) => item.id === orderFilter)?.icon || Package; return <EmptyIcon className="h-7 w-7" />; })()}
+                      </span>
+                      <h3 className="font-black">Nothing in {ORDER_FILTERS.find((item) => item.id === orderFilter)?.label || 'this section'} right now.</h3>
+                      <p className={`mt-2 text-sm ${muted}`}>When an order reaches this stage, it will appear here automatically.</p>
                     </div>
                   ) : (
-                    <div className="space-y-6">
-                      {orders.map((order) => {
-                        const status = getOrderStatus(order);
-                        const StatusIcon = status.icon;
+                    <div className="space-y-5">
+                      {visibleOrders.map((order) => {
+                        const progress = getOrderProgressState(order);
                         const rate = order.lkrRate || lkrRate;
                         const placed = order.createdAt?.toDate ? order.createdAt.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
                         return (
-                          <div key={order.id} className={`rounded-2xl border overflow-hidden ${darkMode ? 'bg-white/[0.02] border-white/10' : 'bg-slate-50 border-slate-200'}`}>
-                            <div className={`px-6 py-4 border-b flex flex-col md:flex-row md:items-center justify-between gap-4 ${darkMode ? 'border-white/10' : 'bg-slate-100/50 border-slate-200'}`}>
-                              <div className="flex flex-wrap items-center gap-6">
+                          <article key={order.id} className={`overflow-hidden rounded-3xl border ${darkMode ? 'border-white/10 bg-white/[0.025]' : 'border-slate-200 bg-slate-50'}`}>
+                            <header className={`flex flex-col gap-4 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 ${darkMode ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-white/70'}`}>
+                              <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
                                 <div>
-                                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${muted}`}>Order</p>
-                                  <p className="font-mono font-bold text-xs">{order.id}</p>
+                                  <p className={`mb-1 text-[10px] font-black uppercase tracking-wider ${muted}`}>Order number</p>
+                                  <p className="font-mono text-xs font-bold">{order.orderNumber || order.id}</p>
                                 </div>
                                 <div>
-                                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${muted}`}>Placed</p>
-                                  <p className="font-bold text-sm">{placed}</p>
+                                  <p className={`mb-1 text-[10px] font-black uppercase tracking-wider ${muted}`}>Placed</p>
+                                  <p className="text-sm font-bold">{placed}</p>
                                 </div>
                                 <div>
-                                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${muted}`}>Total</p>
-                                  <p className="font-black text-sm text-[#1A0F2E]">
+                                  <p className={`mb-1 text-[10px] font-black uppercase tracking-wider ${muted}`}>Total</p>
+                                  <p className="text-sm font-black text-[#8B6BB3]">
                                     {order.grandTotalLkr
                                       ? `Rs. ${Number(order.grandTotalLkr).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                       : formatLKR(order.grandTotal, rate)}
                                   </p>
                                 </div>
                               </div>
-                              <div className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 w-fit ${TONES[status.tone]}`}>
-                                <StatusIcon className="w-3.5 h-3.5" /> {status.label}
-                              </div>
-                            </div>
+                              <span className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-wider ${progress.terminal
+                                ? (darkMode ? 'border-amber-300/20 bg-amber-300/10 text-amber-200' : 'border-amber-200 bg-amber-50 text-amber-800')
+                                : (darkMode ? 'border-violet-300/20 bg-violet-300/10 text-violet-200' : 'border-violet-200 bg-violet-50 text-[#1A0F2E]')}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${progress.terminal ? 'bg-current' : 'bg-violet-500'}`} />{progress.status}
+                              </span>
+                            </header>
 
-                            <div className="px-6 py-4 space-y-4">
+                            <div className="space-y-5 p-4 sm:p-6">
                               {(order.items || []).map((item, idx) => (
-                                <div key={idx} className="flex items-center gap-4">
-                                  {item.image && <img src={item.image} alt="" className="w-16 h-16 rounded-xl object-cover bg-slate-200" />}
-                                  <div className="flex-1 min-w-0">
-                                    <h4 className="font-bold text-sm line-clamp-2">{item.name}</h4>
-                                    <p className={`text-xs mt-1 ${muted}`}>Qty: {item.quantity}</p>
+                                <div key={`${item.id || item.name || 'item'}-${idx}`} className="flex items-center gap-4">
+                                  {item.image ? <img src={item.image} alt={item.name || 'Order item'} className="h-14 w-14 rounded-xl bg-slate-200 object-cover sm:h-16 sm:w-16" /> : <span className={`flex h-14 w-14 items-center justify-center rounded-xl ${darkMode ? 'bg-white/5 text-slate-500' : 'bg-slate-200 text-slate-500'}`}><Package className="h-6 w-6" /></span>}
+                                  <div className="min-w-0 flex-1">
+                                    <h4 className="line-clamp-2 text-sm font-bold">{item.name || 'Dexvee item'}</h4>
+                                    <p className={`mt-1 text-xs ${muted}`}>Quantity: {item.quantity || 1}</p>
                                   </div>
-                                  <div className="font-black text-sm text-right whitespace-nowrap">{formatLKR(item.price * item.quantity, rate)}</div>
+                                  <div className="whitespace-nowrap text-right text-sm font-black">{formatLKR((Number(item.price) || 0) * (Number(item.quantity) || 1), rate)}</div>
                                 </div>
                               ))}
+                              <OrderProgressMap order={order} darkMode={darkMode} progress={progress} />
                             </div>
-
-                            <div className={`px-6 py-3 border-t text-xs font-medium ${muted} ${darkMode ? 'border-white/10' : 'border-slate-200 bg-white'}`}>{status.note}</div>
-                          </div>
+                          </article>
                         );
                       })}
                     </div>

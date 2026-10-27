@@ -1,0 +1,450 @@
+diff --git a/src/AccountPage.jsx b/src/AccountPage.jsx
+index b1562b0..3aded9c 100644
+--- a/src/AccountPage.jsx
++++ b/src/AccountPage.jsx
+@@ -1,8 +1,8 @@
+-import React, { useState, useEffect } from 'react';
++import { useState, useEffect } from 'react';
+ import { Link, Navigate, useNavigate } from 'react-router-dom';
+ import {
+   User, Package, MapPin, Shield, LogOut, ChevronRight, ExternalLink,
+-  CheckCircle2, Clock, XCircle
++  CreditCard, PackageCheck, Truck, Star, RotateCcw
+ } from 'lucide-react';
+ import {
+   signOut, updateProfile, EmailAuthProvider,
+@@ -11,34 +11,29 @@ import {
+ import { collection, query, where, onSnapshot } from 'firebase/firestore';
+ import { auth, db } from './firebase';
+ import { formatLKR } from './utils/currency';
++import OrderProgressMap from './components/OrderProgressMap';
++import { getOrderProgressState } from './utils/orderProgress';
+ 
+ const TABS = [
+   { id: 'profile', label: 'My Profile', icon: User },
+-  { id: 'orders', label: 'Order History', icon: Package },
++  { id: 'orders', label: 'My Orders', icon: Package },
+   { id: 'address', label: 'Last Address', icon: MapPin },
+   { id: 'security', label: 'Security', icon: Shield },
+ ];
+ 
+-// What the customer sees. Deliberately says nothing about suppliers.
+-function getOrderStatus(order) {
+-  if (order.paymentStatus === 'pending_verification') {
+-    return { label: 'Awaiting payment check', tone: 'amber', icon: Clock, note: 'We verify bank transfers within 3 business days.' };
+-  }
+-  if (order.paymentStatus === 'rejected') {
+-    return { label: 'Payment not verified', tone: 'red', icon: XCircle, note: 'We couldn\'t match your transfer. Please contact us so we can sort it out.' };
+-  }
+-  return { label: 'Payment confirmed', tone: 'emerald', icon: CheckCircle2, note: 'Your order is being prepared. International delivery can take a few weeks.' };
+-}
+-
+-const TONES = {
+-  amber: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
+-  red: 'bg-red-500/10 text-red-500 border-red-500/20',
+-  emerald: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
+-};
++const ORDER_FILTERS = [
++  { id: 'all', label: 'All orders', icon: Package },
++  { id: 'toPay', label: 'To Pay', icon: CreditCard },
++  { id: 'toShip', label: 'To Ship', icon: PackageCheck },
++  { id: 'toReceive', label: 'To Receive', icon: Truck },
++  { id: 'toReview', label: 'To Review', icon: Star },
++  { id: 'returns', label: 'Returns & Cancellations', icon: RotateCcw },
++];
+ 
+ export default function AccountPage({ darkMode, user, authReady, lkrRate, onProfileUpdated }) {
+   const navigate = useNavigate();
+   const [activeTab, setActiveTab] = useState('profile');
++  const [orderFilter, setOrderFilter] = useState('all');
+ 
+   const [orders, setOrders] = useState([]);
+   const [ordersLoading, setOrdersLoading] = useState(true);
+@@ -94,6 +89,15 @@ export default function AccountPage({ darkMode, user, authReady, lkrRate, onProf
+     .join(', ');
+   const initial = (user.displayName || user.email || '?').charAt(0).toUpperCase();
+   const lastOrder = orders[0];
++  const orderCounts = orders.reduce((counts, order) => {
++    const { bucket } = getOrderProgressState(order);
++    counts.all += 1;
++    if (bucket !== 'all') counts[bucket] = (counts[bucket] || 0) + 1;
++    return counts;
++  }, { all: 0, toPay: 0, toShip: 0, toReceive: 0, toReview: 0, returns: 0 });
++  const visibleOrders = orderFilter === 'all'
++    ? orders
++    : orders.filter((order) => getOrderProgressState(order).bucket === orderFilter);
+ 
+   const handleSignOut = async () => {
+     await signOut(auth);
+@@ -249,67 +253,125 @@ export default function AccountPage({ darkMode, user, authReady, lkrRate, onProf
+ 
+               {activeTab === 'orders' && (
+                 <div>
+-                  <h2 className="text-2xl font-black uppercase mb-2">Order History</h2>
+-                  <p className={`text-sm mb-8 ${muted}`}>Orders placed while you were signed in. Orders placed as a guest or before you signed up won't appear here.</p>
++                  <div className="mb-7">
++                    <h2 className="text-2xl font-black uppercase mb-2">My Orders</h2>
++                    <p className={`text-sm ${muted}`}>Follow every order from payment check to delivery, with live updates from your account.</p>
++                  </div>
++
++                  <div className="relative mb-7 overflow-hidden rounded-3xl bg-gradient-to-br from-[#1A0F2E] via-[#281746] to-[#402669] px-6 py-7 text-white shadow-lg sm:px-8">
++                    <div className="pointer-events-none absolute -right-8 -top-20 h-64 w-64 rounded-full border border-white/10" />
++                    <div className="pointer-events-none absolute -right-1 -top-12 h-48 w-48 rounded-full border border-white/10" />
++                    <div className="relative flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
++                      <div className="max-w-lg">
++                        <p className="text-[10px] font-black uppercase tracking-[0.22em] text-violet-200">Your order board</p>
++                        <h3 className="mt-2 text-2xl font-black leading-tight sm:text-3xl">Every order. <span className="text-violet-200">One clear journey.</span></h3>
++                        <p className="mt-2 max-w-md text-sm leading-relaxed text-white/70">See what needs attention and where each parcel is in its journey.</p>
++                      </div>
++                      <div className="flex shrink-0 gap-3">
++                        <div className="min-w-[106px] rounded-2xl border border-white/15 bg-white/10 px-4 py-3 backdrop-blur-sm">
++                          <p className="text-[10px] font-bold uppercase tracking-wider text-white/60">All orders</p>
++                          <p className="mt-1 text-2xl font-black">{ordersLoading ? '—' : orderCounts.all}</p>
++                        </div>
++                        <div className="min-w-[106px] rounded-2xl border border-white/15 bg-white/10 px-4 py-3 backdrop-blur-sm">
++                          <p className="text-[10px] font-bold uppercase tracking-wider text-white/60">In progress</p>
++                          <p className="mt-1 text-2xl font-black">{ordersLoading ? '—' : orderCounts.toPay + orderCounts.toShip + orderCounts.toReceive}</p>
++                        </div>
++                      </div>
++                    </div>
++                  </div>
++
++                  <nav className="mb-7 -mx-2 flex gap-2 overflow-x-auto px-2 pb-2 [scrollbar-width:thin]" aria-label="Filter orders" role="group">
++                    {ORDER_FILTERS.map((filter) => {
++                      const Icon = filter.icon;
++                      const selected = orderFilter === filter.id;
++                      return (
++                        <button
++                          key={filter.id}
++                          type="button"
++                          aria-pressed={selected}
++                          onClick={() => setOrderFilter(filter.id)}
++                          className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-4 py-2.5 text-xs font-black transition-all ${selected
++                            ? 'border-[#1A0F2E] bg-[#1A0F2E] text-white shadow-md'
++                            : darkMode
++                              ? 'border-white/10 bg-white/[0.03] text-slate-300 hover:border-white/20 hover:bg-white/[0.07]'
++                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'}`}>
++                          <Icon className="h-4 w-4" />
++                          <span>{filter.label}</span>
++                          <span className={`min-w-5 rounded-full px-1.5 py-0.5 text-[10px] ${selected ? 'bg-white/15 text-white' : darkMode ? 'bg-white/10 text-slate-300' : 'bg-slate-100 text-slate-500'}`}>
++                            {ordersLoading ? '—' : orderCounts[filter.id]}
++                          </span>
++                        </button>
++                      );
++                    })}
++                  </nav>
+ 
+                   {ordersLoading ? (
+-                    <p className={`text-sm font-bold ${muted}`}>Loading your orders…</p>
++                    <div className={`rounded-2xl border p-8 text-center text-sm font-bold ${darkMode ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-slate-50'} ${muted}`}>Loading your orders…</div>
+                   ) : ordersError ? (
+-                    <p className="text-sm font-bold text-red-500">{ordersError}</p>
++                    <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 text-sm font-bold text-red-500">{ordersError}</div>
+                   ) : orders.length === 0 ? (
+-                    <div className="text-center py-16">
+-                      <Package className="w-12 h-12 mx-auto mb-4 text-gray-500 opacity-50" />
+-                      <p className={`font-bold mb-4 ${muted}`}>You haven't placed any orders yet.</p>
+-                      <Link to="/" className="inline-block px-6 py-3 bg-[#1A0F2E] text-white rounded-full text-xs font-black uppercase tracking-wider">Start Shopping</Link>
++                    <div className={`rounded-3xl border px-6 py-14 text-center ${darkMode ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-slate-50'}`}>
++                      <span className={`mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl ${darkMode ? 'bg-white/5 text-violet-200' : 'bg-[#1A0F2E]/5 text-[#1A0F2E]'}`}><Package className="h-7 w-7" /></span>
++                      <h3 className="font-black">Your next favorite find starts here.</h3>
++                      <p className={`mt-2 mb-5 text-sm ${muted}`}>Orders placed while signed in will appear here with their progress.</p>
++                      <Link to="/" className="inline-flex items-center rounded-full bg-[#1A0F2E] px-6 py-3 text-xs font-black uppercase tracking-wider text-white">Start Shopping</Link>
++                    </div>
++                  ) : visibleOrders.length === 0 ? (
++                    <div className={`rounded-3xl border px-6 py-14 text-center ${darkMode ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-slate-50'}`}>
++                      <span className={`mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl ${darkMode ? 'bg-white/5 text-violet-200' : 'bg-[#1A0F2E]/5 text-[#1A0F2E]'}`}>
++                        {(() => { const EmptyIcon = ORDER_FILTERS.find((item) => item.id === orderFilter)?.icon || Package; return <EmptyIcon className="h-7 w-7" />; })()}
++                      </span>
++                      <h3 className="font-black">Nothing in {ORDER_FILTERS.find((item) => item.id === orderFilter)?.label || 'this section'} right now.</h3>
++                      <p className={`mt-2 text-sm ${muted}`}>When an order reaches this stage, it will appear here automatically.</p>
+                     </div>
+                   ) : (
+-                    <div className="space-y-6">
+-                      {orders.map((order) => {
+-                        const status = getOrderStatus(order);
+-                        const StatusIcon = status.icon;
++                    <div className="space-y-5">
++                      {visibleOrders.map((order) => {
++                        const progress = getOrderProgressState(order);
+                         const rate = order.lkrRate || lkrRate;
+                         const placed = order.createdAt?.toDate ? order.createdAt.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+                         return (
+-                          <div key={order.id} className={`rounded-2xl border overflow-hidden ${darkMode ? 'bg-white/[0.02] border-white/10' : 'bg-slate-50 border-slate-200'}`}>
+-                            <div className={`px-6 py-4 border-b flex flex-col md:flex-row md:items-center justify-between gap-4 ${darkMode ? 'border-white/10' : 'bg-slate-100/50 border-slate-200'}`}>
+-                              <div className="flex flex-wrap items-center gap-6">
++                          <article key={order.id} className={`overflow-hidden rounded-3xl border ${darkMode ? 'border-white/10 bg-white/[0.025]' : 'border-slate-200 bg-slate-50'}`}>
++                            <header className={`flex flex-col gap-4 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 ${darkMode ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-white/70'}`}>
++                              <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                                 <div>
+-                                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${muted}`}>Order</p>
+-                                  <p className="font-mono font-bold text-xs">{order.id}</p>
++                                  <p className={`mb-1 text-[10px] font-black uppercase tracking-wider ${muted}`}>Order number</p>
++                                  <p className="font-mono text-xs font-bold">{order.orderNumber || order.id}</p>
+                                 </div>
+                                 <div>
+-                                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${muted}`}>Placed</p>
+-                                  <p className="font-bold text-sm">{placed}</p>
++                                  <p className={`mb-1 text-[10px] font-black uppercase tracking-wider ${muted}`}>Placed</p>
++                                  <p className="text-sm font-bold">{placed}</p>
+                                 </div>
+                                 <div>
+-                                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1 ${muted}`}>Total</p>
+-                                  <p className="font-black text-sm text-[#1A0F2E]">
++                                  <p className={`mb-1 text-[10px] font-black uppercase tracking-wider ${muted}`}>Total</p>
++                                  <p className="text-sm font-black text-[#8B6BB3]">
+                                     {order.grandTotalLkr
+                                       ? `Rs. ${Number(order.grandTotalLkr).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                       : formatLKR(order.grandTotal, rate)}
+                                   </p>
+                                 </div>
+                               </div>
+-                              <div className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 w-fit ${TONES[status.tone]}`}>
+-                                <StatusIcon className="w-3.5 h-3.5" /> {status.label}
+-                              </div>
+-                            </div>
++                              <span className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-wider ${progress.terminal
++                                ? (darkMode ? 'border-amber-300/20 bg-amber-300/10 text-amber-200' : 'border-amber-200 bg-amber-50 text-amber-800')
++                                : (darkMode ? 'border-violet-300/20 bg-violet-300/10 text-violet-200' : 'border-violet-200 bg-violet-50 text-[#1A0F2E]')}`}>
++                                <span className={`h-1.5 w-1.5 rounded-full ${progress.terminal ? 'bg-current' : 'bg-violet-500'}`} />{progress.status}
++                              </span>
++                            </header>
+ 
+-                            <div className="px-6 py-4 space-y-4">
++                            <div className="space-y-5 p-4 sm:p-6">
+                               {(order.items || []).map((item, idx) => (
+-                                <div key={idx} className="flex items-center gap-4">
+-                                  {item.image && <img src={item.image} alt="" className="w-16 h-16 rounded-xl object-cover bg-slate-200" />}
+-                                  <div className="flex-1 min-w-0">
+-                                    <h4 className="font-bold text-sm line-clamp-2">{item.name}</h4>
+-                                    <p className={`text-xs mt-1 ${muted}`}>Qty: {item.quantity}</p>
++                                <div key={`${item.id || item.name || 'item'}-${idx}`} className="flex items-center gap-4">
++                                  {item.image ? <img src={item.image} alt={item.name || 'Order item'} className="h-14 w-14 rounded-xl bg-slate-200 object-cover sm:h-16 sm:w-16" /> : <span className={`flex h-14 w-14 items-center justify-center rounded-xl ${darkMode ? 'bg-white/5 text-slate-500' : 'bg-slate-200 text-slate-500'}`}><Package className="h-6 w-6" /></span>}
++                                  <div className="min-w-0 flex-1">
++                                    <h4 className="line-clamp-2 text-sm font-bold">{item.name || 'Dexvee item'}</h4>
++                                    <p className={`mt-1 text-xs ${muted}`}>Quantity: {item.quantity || 1}</p>
+                                   </div>
+-                                  <div className="font-black text-sm text-right whitespace-nowrap">{formatLKR(item.price * item.quantity, rate)}</div>
++                                  <div className="whitespace-nowrap text-right text-sm font-black">{formatLKR((Number(item.price) || 0) * (Number(item.quantity) || 1), rate)}</div>
+                                 </div>
+                               ))}
++                              <OrderProgressMap order={order} darkMode={darkMode} progress={progress} />
+                             </div>
+-
+-                            <div className={`px-6 py-3 border-t text-xs font-medium ${muted} ${darkMode ? 'border-white/10' : 'border-slate-200 bg-white'}`}>{status.note}</div>
+-                          </div>
++                          </article>
+                         );
+                       })}
+                     </div>
+diff --git a/src/components/OrderProgressMap.jsx b/src/components/OrderProgressMap.jsx
+new file mode 100644
+index 0000000..e2243ca
+--- /dev/null
++++ b/src/components/OrderProgressMap.jsx
+@@ -0,0 +1,81 @@
++import {
++  AlertCircle,
++  BadgeCheck,
++  Check,
++  CreditCard,
++  PackageCheck,
++  Truck
++} from 'lucide-react';
++
++const JOURNEY_STEPS = [
++  { id: 'toPay', label: 'To Pay', detail: 'Payment check', icon: CreditCard },
++  { id: 'toShip', label: 'To Ship', detail: 'Getting ready', icon: PackageCheck },
++  { id: 'toReceive', label: 'To Receive', detail: 'On the way', icon: Truck },
++  { id: 'toReview', label: 'To Review', detail: 'Delivered', icon: BadgeCheck }
++];
++
++export default function OrderProgressMap({ order, darkMode, progress }) {
++  const lineBase = darkMode ? 'bg-white/10' : 'bg-slate-200';
++  const lineDone = darkMode ? 'bg-violet-400' : 'bg-[#1A0F2E]';
++  const muted = darkMode ? 'text-slate-500' : 'text-slate-400';
++  const currentStep = progress.stage;
++  const completion = currentStep < 1 ? 0 : (currentStep / (JOURNEY_STEPS.length - 1)) * 100;
++
++  return (
++    <section className={`rounded-2xl border p-5 sm:p-6 ${darkMode ? 'border-white/10 bg-[#080B13]' : 'border-slate-200 bg-white'}`} aria-label={`Order progress: ${progress.status}`}>
++      <div className="flex flex-wrap items-start justify-between gap-3">
++        <div>
++          <p className={`text-[10px] font-black uppercase tracking-[0.18em] ${muted}`}>Delivery journey</p>
++          <h3 className="mt-1 text-base font-black">{progress.terminal ? 'Order update' : 'Your order, at a glance'}</h3>
++        </div>
++        <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-extrabold ${progress.terminal
++          ? (darkMode ? 'border-amber-300/20 bg-amber-300/10 text-amber-200' : 'border-amber-200 bg-amber-50 text-amber-800')
++          : (darkMode ? 'border-violet-300/20 bg-violet-300/10 text-violet-200' : 'border-violet-200 bg-violet-50 text-[#1A0F2E]')}`}>
++          {progress.terminal ? <AlertCircle className="h-3.5 w-3.5" /> : <span className="h-2 w-2 rounded-full bg-current" />}
++          {progress.status}
++        </span>
++      </div>
++
++      <div className={`relative mt-7 ${progress.terminal ? 'opacity-45' : ''}`}>
++        <div className={`absolute left-[12.5%] right-[12.5%] top-[15px] h-1 rounded-full ${lineBase}`} />
++        {!progress.terminal && (
++          <div
++            className={`absolute left-[12.5%] top-[15px] h-1 rounded-full transition-[width] duration-500 ${lineDone}`}
++            style={{ width: `${completion * 0.75}%` }}
++          />
++        )}
++        <ol className="relative grid grid-cols-4">
++          {JOURNEY_STEPS.map((step, index) => {
++            const Icon = step.icon;
++            const reached = !progress.terminal && index <= currentStep;
++            const isCurrent = !progress.terminal && index === currentStep;
++            return (
++              <li key={step.id} className="flex min-w-0 flex-col items-center text-center" aria-current={isCurrent ? 'step' : undefined}>
++                <span className={`relative z-10 flex h-8 w-8 items-center justify-center rounded-full border-2 transition-colors ${reached
++                  ? (isCurrent ? 'border-[#1A0F2E] bg-[#1A0F2E] text-white shadow-[0_0_0_5px_rgba(26,15,46,0.10)]' : (darkMode ? 'border-violet-300 bg-violet-300 text-[#10091D]' : 'border-[#1A0F2E] bg-[#1A0F2E] text-white'))
++                  : (darkMode ? 'border-white/10 bg-[#080B13] text-slate-600' : 'border-slate-200 bg-white text-slate-400')}`}>
++                  {reached && index < currentStep ? <Check className="h-4 w-4" strokeWidth={3} /> : <Icon className="h-3.5 w-3.5" />}
++                </span>
++                <span className={`mt-3 text-[10px] font-black leading-tight sm:text-xs ${reached ? (darkMode ? 'text-slate-100' : 'text-slate-900') : muted}`}>{step.label}</span>
++                <span className={`mt-1 hidden text-[10px] font-medium sm:block ${muted}`}>{step.detail}</span>
++              </li>
++            );
++          })}
++        </ol>
++      </div>
++
++      <div className={`mt-6 flex flex-col gap-3 border-t pt-4 text-xs sm:flex-row sm:items-center sm:justify-between ${darkMode ? 'border-white/10 text-slate-400' : 'border-slate-100 text-slate-500'}`}>
++        <p className="max-w-2xl leading-relaxed">{progress.note}</p>
++        <div className="flex flex-wrap gap-x-4 gap-y-2 font-semibold">
++          {order.trackingNumber && <span>Tracking <span className={darkMode ? 'text-slate-200' : 'text-slate-800'}>{order.trackingNumber}</span></span>}
++          {order.estimatedDelivery && <span>Est. {order.estimatedDelivery}</span>}
++          {order.trackingUrl && (
++            <a href={order.trackingUrl} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-1 font-black underline underline-offset-2 ${darkMode ? 'text-violet-300' : 'text-[#1A0F2E]'}`}>
++              Track parcel <Truck className="h-3.5 w-3.5" />
++            </a>
++          )}
++        </div>
++      </div>
++    </section>
++  );
++}
+diff --git a/src/utils/orderProgress.js b/src/utils/orderProgress.js
+new file mode 100644
+index 0000000..eed0075
+--- /dev/null
++++ b/src/utils/orderProgress.js
+@@ -0,0 +1,118 @@
++const normalize = (value) => String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
++
++function hasReview(order) {
++  const reviewStatus = normalize(order.reviewStatus);
++  return Boolean(
++    order.reviewedAt
++    || order.reviewSubmittedAt
++    || order.reviewId
++    || order.isReviewed
++    || ['reviewed', 'review_complete', 'review_completed'].includes(normalize(order.status))
++    || ['submitted', 'approved', 'complete', 'completed'].includes(reviewStatus)
++  );
++}
++
++export function getOrderProgressState(order) {
++  const status = normalize(order.status || 'placed');
++  const paymentStatus = normalize(order.paymentStatus);
++  const requestStatus = normalize(order.customerRequestStatus || order.requestStatus);
++  const returnStatus = normalize(order.returnStatus);
++  const cancellationStatus = normalize(order.cancellationStatus);
++  const refundStatus = normalize(order.refundStatus);
++  const allStates = [status, requestStatus, returnStatus, cancellationStatus, refundStatus];
++
++  const isReturnOrCancellation = allStates.some((value) => [
++    'cancel_requested',
++    'cancel_request',
++    'cancellation_requested',
++    'cancelled',
++    'canceled',
++    'return_requested',
++    'return_request',
++    'return_in_progress',
++    'return_approved',
++    'returned',
++    'refund_pending',
++    'refunded'
++  ].includes(value));
++
++  if (paymentStatus === 'rejected' || isReturnOrCancellation) {
++    let label = 'Order update';
++    let note = 'This order has an update from our team.';
++    const currentRequest = allStates.find((value) => value.includes('return') || value.includes('refund') || value.includes('cancel'));
++
++    if (paymentStatus === 'rejected') {
++      label = 'Payment not verified';
++      note = "We couldn't match your transfer. Please contact support for help with this order.";
++    } else if (currentRequest?.includes('return')) {
++      label = currentRequest === 'returned' ? 'Return complete' : 'Return in progress';
++      note = currentRequest === 'returned'
++        ? 'Your return has been marked complete.'
++        : 'Your return request is being reviewed. We will update you here.';
++    } else if (currentRequest?.includes('refund')) {
++      label = currentRequest === 'refunded' ? 'Refund complete' : 'Refund in progress';
++      note = currentRequest === 'refunded'
++        ? 'Your refund has been marked complete.'
++        : 'Your refund is being processed.';
++    } else if (currentRequest?.includes('request')) {
++      label = 'Cancellation requested';
++      note = 'Your cancellation request is being reviewed. We will update you here.';
++    } else if (['cancelled', 'canceled'].includes(currentRequest)) {
++      label = 'Order cancelled';
++      note = 'This order has been cancelled.';
++    }
++
++    return { bucket: 'returns', stage: -1, status: label, note, terminal: true };
++  }
++
++  if (paymentStatus === 'pending_verification' || paymentStatus === 'pending' || ['pending_payment', 'payment_pending', 'to_pay'].includes(status)) {
++    return {
++      bucket: 'toPay',
++      stage: 0,
++      status: 'Payment under review',
++      note: 'Your payment receipt is in. We will move your order forward after the payment check.',
++      terminal: false
++    };
++  }
++
++  if (['delivered', 'complete', 'completed', 'to_review', 'reviewed', 'review_complete', 'review_completed'].includes(status)) {
++    const reviewed = hasReview(order);
++    return {
++      bucket: reviewed ? 'all' : 'toReview',
++      stage: 3,
++      status: reviewed ? 'Delivered · reviewed' : 'Delivered',
++      note: reviewed ? 'Your order was delivered and reviewed.' : 'Your order has arrived. We hope you love it.',
++      terminal: false
++    };
++  }
++
++  if (['shipped', 'in_transit', 'out_for_delivery', 'to_receive'].includes(status)) {
++    const labels = {
++      shipped: 'Shipped',
++      in_transit: 'In transit',
++      out_for_delivery: 'Out for delivery',
++      to_receive: 'In transit'
++    };
++    return {
++      bucket: 'toReceive',
++      stage: 2,
++      status: labels[status],
++      note: 'Your order is on its way. Use the carrier tracking link below for shipment updates.',
++      terminal: false
++    };
++  }
++
++  const isPreparing = ['processing', 'sent_to_cj', 'payment_confirmed', 'to_ship', 'packing', 'ready_to_ship'].includes(status)
++    || order.cjOrderStatus === 'created'
++    || paymentStatus === 'confirmed';
++
++  return {
++    bucket: 'toShip',
++    stage: 1,
++    status: isPreparing ? 'Being prepared' : 'Order received',
++    note: isPreparing
++      ? 'Payment is confirmed. We are preparing your order for dispatch.'
++      : 'We have received your order and will share the next update here.',
++    terminal: false
++  };
++}
