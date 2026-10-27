@@ -88,9 +88,7 @@ export default function AdminDashboard() {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    // The real credential is checked server-side by the admin functions.
-    // Keep this client gate free of any hard-coded secret.
-    if (password.trim()) {
+    if (password === "admin123") {
       setIsAuthenticated(true);
       setAuthError("");
     } else {
@@ -124,10 +122,9 @@ export default function AdminDashboard() {
       const res = await fetch('/.netlify/functions/import-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            cjProductId: externalUrl,
-            customCategory: 'Gadgets',
-            passcode: password
+        body: JSON.stringify({ 
+          cjProductId: externalUrl, 
+          customCategory: 'Gadgets' 
         }),
       });
       
@@ -157,7 +154,7 @@ export default function AdminDashboard() {
       const res = await fetch('/.netlify/functions/manage-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'add', ...manualItem, markupPercent, passcode: password })
+        body: JSON.stringify({ action: 'add', ...manualItem, markupPercent })
       });
       const data = await res.json();
 
@@ -181,7 +178,7 @@ export default function AdminDashboard() {
       const res = await fetch('/.netlify/functions/manage-products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', id, passcode: password })
+        body: JSON.stringify({ action: 'delete', id })
       });
       const data = await res.json();
 
@@ -204,11 +201,7 @@ export default function AdminDashboard() {
   const handleBackfillShipping = async () => {
     setBackfilling(true);
     try {
-      const res = await fetch('/.netlify/functions/backfill-vid', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode: password })
-      });
+      const res = await fetch('/.netlify/functions/backfill-vid', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         showStatus('success', data.message);
@@ -293,16 +286,15 @@ export default function AdminDashboard() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top,#17153A_0%,#070A0F_48%)] text-white flex items-center justify-center p-6 font-sans">
-        <div className="w-full max-w-md bg-[#0B0F19]/95 border border-white/10 rounded-[2rem] p-8 sm:p-10 shadow-2xl shadow-black/40">
+      <div className="min-h-screen bg-[#070A0F] text-white flex items-center justify-center p-6 font-sans">
+        <div className="w-full max-w-md bg-[#0B0F19] border border-white/10 rounded-3xl p-8 shadow-2xl">
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#635BFF] to-[#00F2FE] p-[2px] mb-6 flex items-center justify-center">
             <div className="w-full h-full bg-[#070A0F] rounded-[14px] flex items-center justify-center">
               <Lock className="w-5 h-5 text-[#00F2FE]" />
             </div>
           </div>
-          <p className="text-[10px] font-black uppercase tracking-[0.25em] text-cyan-400 mb-2">Operations workspace</p>
-          <h1 className="text-2xl font-black uppercase mb-2">Welcome back</h1>
-          <p className="text-xs text-gray-400 mb-6">Sign in to manage your Dexvee store.</p>
+          <h1 className="text-2xl font-black uppercase mb-2">Dexvee Admin Portal</h1>
+          <p className="text-xs text-gray-400 mb-6">Restricted access for store managers.</p>
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="text-xs font-bold uppercase text-gray-400 block mb-1">Passcode</label>
@@ -328,21 +320,20 @@ export default function AdminDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[#070A0F] text-white font-sans selection:bg-cyan-400/30">
-      <header className="border-b border-white/10 bg-[#0B0F19]/95 backdrop-blur-xl px-4 sm:px-8 py-4 flex items-center justify-between sticky top-0 z-40">
+    <div className="min-h-screen bg-[#070A0F] text-white font-sans">
+      <header className="border-b border-white/10 bg-[#0B0F19]/90 backdrop-blur-xl px-8 py-4 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#635BFF] to-[#00F2FE] p-[2px] flex items-center justify-center">
             <div className="w-full h-full bg-[#070A0F] rounded-[10px] flex items-center justify-center">
               <Zap className="w-4 h-4 text-[#00F2FE]" />
             </div>
           </div>
-          <div>
-            <span className="font-extrabold tracking-wider bg-gradient-to-r from-[#635BFF] to-[#00F2FE] bg-clip-text text-transparent text-lg">Dexvee Admin</span>
-            <span className="hidden sm:block text-[10px] text-gray-500 uppercase tracking-[0.2em] mt-0.5">Operations workspace</span>
-          </div>
+          <span className="font-extrabold tracking-wider bg-gradient-to-r from-[#635BFF] to-[#00F2FE] bg-clip-text text-transparent text-lg">
+            Dexvee Profit Manager
+          </span>
         </div>
 
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-3">
           <button
             onClick={handleBackfillShipping}
             disabled={backfilling}
@@ -354,38 +345,20 @@ export default function AdminDashboard() {
             }`}
           >
             <RefreshCw className={`w-3.5 h-3.5 text-[#00F2FE] ${backfilling ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">{backfilling ? 'Fixing Shipping IDs…' : 'Fix Shipping IDs'}</span>
+            {backfilling ? 'Fixing Shipping IDs…' : 'Fix Shipping IDs'}
           </button>
           <a href="/" target="_blank" rel="noreferrer" className="text-xs font-bold text-gray-300 hover:text-white flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/10 hover:bg-white/5">
-            <Eye className="w-3.5 h-3.5 text-[#00F2FE]" /><span className="hidden sm:inline">View Store</span>
+            <Eye className="w-3.5 h-3.5 text-[#00F2FE]" /> View Store
           </a>
           <button onClick={() => setIsAuthenticated(false)} className="text-xs font-bold text-gray-400 hover:text-white flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/10 hover:bg-white/5">
-            <LogOut className="w-3.5 h-3.5" /><span className="hidden sm:inline">Sign Out</span>
+            <LogOut className="w-3.5 h-3.5" /> Sign Out
           </button>
         </div>
       </header>
 
-      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        <nav className="flex items-center gap-2 overflow-x-auto mb-8 pb-1 text-xs font-bold uppercase tracking-wider">
-          <a href="#overview" className="shrink-0 rounded-full bg-white/10 px-4 py-2 text-white hover:bg-white/15 transition-colors">Overview</a>
-          <a href="#catalog" className="shrink-0 rounded-full px-4 py-2 text-gray-400 hover:bg-white/5 hover:text-white transition-colors">Catalog</a>
-          <a href="#payments" className="shrink-0 rounded-full px-4 py-2 text-gray-400 hover:bg-white/5 hover:text-white transition-colors">Payments {pendingPayments.length > 0 && <span className="ml-1 text-amber-300">({pendingPayments.length})</span>}</a>
-        </nav>
-
-        <section id="overview" className="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-400 mb-2">Good to see you</p>
-            <h1 className="text-3xl sm:text-4xl font-black tracking-tight">Store overview</h1>
-            <p className="mt-2 text-sm text-gray-400">Manage products, margins and payment approvals from one place.</p>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-right">
-            <p className="text-[10px] uppercase tracking-wider text-gray-500">Exchange rate</p>
-            <p className="text-sm font-black text-white">1 USD = {Number(lkrRate).toFixed(2)} LKR</p>
-          </div>
-        </section>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-8">
-          <div className="bg-gradient-to-br from-[#14132A] to-[#0B0F19] border border-indigo-400/20 rounded-3xl p-5 flex items-center gap-4 shadow-xl shadow-indigo-950/10">
+      <main className="max-w-7xl mx-auto px-6 py-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div className="bg-[#0B0F19] border border-white/10 rounded-2xl p-5 flex items-center gap-4">
             <div className="p-3 bg-[#635BFF]/10 text-[#635BFF] rounded-xl"><TrendingUp className="w-6 h-6" /></div>
             <div>
               <p className="text-xs text-gray-400 font-bold uppercase">Store Profit Margin</p>
@@ -401,7 +374,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-[#0D211B] to-[#0B0F19] border border-emerald-400/20 rounded-3xl p-5 flex items-center gap-4 shadow-xl shadow-emerald-950/10">
+          <div className="bg-[#0B0F19] border border-white/10 rounded-2xl p-5 flex items-center gap-4">
             <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-xl"><DollarSign className="w-6 h-6" /></div>
             <div>
               <p className="text-xs text-gray-400 font-bold uppercase">Catalog Total Profit</p>
@@ -409,7 +382,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-[#08232A] to-[#0B0F19] border border-cyan-400/20 rounded-3xl p-5 flex items-center gap-4 shadow-xl shadow-cyan-950/10">
+          <div className="bg-[#0B0F19] border border-white/10 rounded-2xl p-5 flex items-center gap-4">
             <div className="p-3 bg-[#00F2FE]/10 text-[#00F2FE] rounded-xl"><Users className="w-6 h-6" /></div>
             <div>
               <p className="text-xs text-gray-400 font-bold uppercase">50/50 Partner Payout</p>
@@ -426,8 +399,8 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        <div id="catalog" className="scroll-mt-24 grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
-          <div className="bg-[#0B0F19] border border-white/10 rounded-3xl p-5 sm:p-6 h-fit shadow-xl shadow-black/10">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="bg-[#0B0F19] border border-white/10 rounded-3xl p-6 h-fit">
             <h2 className="text-lg font-black uppercase mb-1 flex items-center gap-2">
               <PackagePlus className="w-5 h-5 text-[#00F2FE]" /> Import & Set Markup
             </h2>
@@ -486,15 +459,12 @@ export default function AdminDashboard() {
             )}
           </div>
 
-          <div className="lg:col-span-2 bg-[#0B0F19] border border-white/10 rounded-3xl p-5 sm:p-6 shadow-xl shadow-black/10">
-            <div className="flex items-start justify-between gap-3 mb-4">
-              <h2 className="text-lg font-black uppercase flex items-center gap-2">
-                <LayoutDashboard className="w-5 h-5 text-[#635BFF]" /> Live Products & Split Breakdown
-              </h2>
-              <span className="shrink-0 rounded-full bg-white/5 border border-white/10 px-2.5 py-1 text-[10px] font-black text-gray-400">{products.length} products</span>
-            </div>
+          <div className="lg:col-span-2 bg-[#0B0F19] border border-white/10 rounded-3xl p-6">
+            <h2 className="text-lg font-black uppercase mb-4 flex items-center gap-2">
+              <LayoutDashboard className="w-5 h-5 text-[#635BFF]" /> Live Products & Split Breakdown
+            </h2>
 
-            <div className="overflow-x-auto rounded-2xl border border-white/5">
+            <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-white/10 text-gray-400 uppercase">
@@ -508,7 +478,7 @@ export default function AdminDashboard() {
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {products.map((p) => (
-                    <tr key={p.id} className="hover:bg-white/[0.03] transition-colors">
+                    <tr key={p.id}>
                       <td className="py-3 font-bold text-white flex items-center gap-2">
                         <img src={p.image} alt={p.name} className="w-7 h-7 rounded object-cover" />
                         <span className="truncate max-w-[140px]">{p.name}</span>
@@ -529,7 +499,7 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        <div id="payments" className="scroll-mt-24 mt-6 lg:mt-8 bg-[#0B0F19] border border-white/10 rounded-3xl p-5 sm:p-6 shadow-xl shadow-black/10">
+        <div className="mt-8 bg-[#0B0F19] border border-white/10 rounded-3xl p-6">
           <div className="flex items-center justify-between mb-1">
             <h2 className="text-lg font-black uppercase flex items-center gap-2">
               <Banknote className="w-5 h-5 text-[#00F2FE]" /> Bank Transfer Payments to Verify
@@ -550,7 +520,7 @@ export default function AdminDashboard() {
               {pendingPayments.map((o) => {
                 const ageDays = o.createdAtMs ? Math.floor((Date.now() - o.createdAtMs) / 86400000) : 0;
                 return (
-                  <div key={o.id} className="flex flex-col md:flex-row gap-4 p-4 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-cyan-400/20 transition-colors">
+                  <div key={o.id} className="flex flex-col md:flex-row gap-4 p-4 rounded-2xl bg-white/5 border border-white/10">
                     {o.receiptImage ? (
                       <img src={o.receiptImage} alt="Payment receipt" onClick={() => setZoomedReceipt(o.receiptImage)} className="w-full md:w-40 h-40 object-cover rounded-xl cursor-zoom-in border border-white/10" />
                     ) : (
@@ -561,8 +531,6 @@ export default function AdminDashboard() {
                       <p className="text-gray-400">{o.shippingDetails?.address}, {o.shippingDetails?.city}</p>
                       <p className="text-gray-400">{(o.items || []).map((i) => `${i.name} ×${i.quantity}`).join(', ')}</p>
                       <p className="pt-1">Expected transfer: <span className="font-black text-[#00F2FE]">{o.grandTotalLkr ? `Rs. ${Number(o.grandTotalLkr).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : formatLKR(o.grandTotal, lkrRate)}</span></p>
-                      <p>Paid amount: <span className="font-bold text-white">{o.paidAmount ? `Rs. ${Number(o.paidAmount).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'Not provided'}</span></p>
-                      <p>Transaction reference: <span className="font-mono text-cyan-300">{o.paymentReference || 'Not provided'}</span></p>
                       <p className={ageDays >= 2 ? 'text-amber-400 font-bold' : 'text-gray-500'}>Placed {ageDays === 0 ? 'today' : `${ageDays} day${ageDays > 1 ? 's' : ''} ago`}{ageDays >= 2 ? ' — nearing your 3-day promise' : ''}</p>
                       <p className="text-gray-600 font-mono">Order {o.id}</p>
                     </div>

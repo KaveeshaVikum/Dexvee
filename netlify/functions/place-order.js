@@ -130,56 +130,6 @@ async function saveReceipt(orderId, receiptImageBase64) {
   });
 }
 
-const INITIAL_PRODUCT_PRICES = {
-  '1': 34.99,
-  '2': 64.50,
-  '3': 89.90,
-  '4': 24.99,
-  '5': 18.50,
-  '6': 29.00
-};
-
-async function validateAndPriceItems(items) {
-  const validatedItems = [];
-
-  for (const item of items) {
-    const id = String(item?.id || '');
-    const quantity = Number(item?.quantity);
-    if (!id || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
-      throw new Error('One or more order items are invalid.');
-    }
-
-    let productPrice = INITIAL_PRODUCT_PRICES[id];
-    if (productPrice === undefined) {
-      const productSnap = await db.collection('products').doc(id).get();
-      if (!productSnap.exists) throw new Error('One or more products are no longer available.');
-      productPrice = Number(productSnap.data()?.sellingPrice);
-    }
-
-    if (!Number.isFinite(productPrice) || productPrice < 0) {
-      throw new Error('A product price could not be verified.');
-    }
-
-    if (Math.abs(Number(item.price) - productPrice) > 0.01) {
-      throw new Error('A product price changed. Please refresh and try again.');
-    }
-
-    validatedItems.push({
-      id,
-      name: String(item.name || 'Product').slice(0, 200),
-      image: String(item.image || '').slice(0, 1000),
-      vid: item.vid || null,
-      quantity,
-      price: productPrice
-    });
-  }
-
-  return {
-    items: validatedItems,
-    subtotal: Math.round(validatedItems.reduce((sum, item) => sum + item.price * item.quantity, 0) * 100) / 100
-  };
-}
-
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
@@ -187,7 +137,7 @@ export const handler = async (event) => {
 
   try {
     const data = JSON.parse(event.body);
-    const { items, shippingDetails, paymentMethod, subtotal, shippingCost, grandTotal, shippingCarrier, receiptImageBase64, paymentReference, paidAmount, grandTotalLkr, lkrRate, idToken } = data;
+    const { items, shippingDetails, paymentMethod, subtotal, shippingCost, grandTotal, shippingCarrier, receiptImageBase64, grandTotalLkr, lkrRate, idToken } = data;
 
     if (!Array.isArray(items) || items.length === 0) {
       throw new Error('Order has no items.');
@@ -203,20 +153,6 @@ export const handler = async (event) => {
     }
     if (paymentMethod === 'BANK_TRANSFER' && !receiptImageBase64) {
       throw new Error('A payment receipt is required for bank transfer orders.');
-    }
-    if (paymentMethod === 'BANK_TRANSFER' && (!String(paymentReference || '').trim() || !Number.isFinite(Number(paidAmount)) || Number(paidAmount) <= 0)) {
-      throw new Error('Paid amount and transaction reference are required for bank transfer orders.');
-    }
-
-    const priced = await validateAndPriceItems(items);
-    const requestedShipping = Number(shippingCost);
-    const requestedGrandTotal = Number(grandTotal);
-    if (!Number.isFinite(requestedShipping) || requestedShipping < 0 || requestedShipping > 1000) {
-      throw new Error('The shipping amount could not be verified.');
-    }
-    const verifiedGrandTotal = Math.round((priced.subtotal + requestedShipping) * 100) / 100;
-    if (Math.abs(Number(subtotal) - priced.subtotal) > 0.01 || Math.abs(requestedGrandTotal - verifiedGrandTotal) > 0.01) {
-      throw new Error('The order total changed. Please refresh and try again.');
     }
 
     // Who is ordering? Only trust a user id we verified ourselves from a
@@ -260,7 +196,7 @@ export const handler = async (event) => {
       // legitimate. Forwarding now, before anyone's checked the receipt,
       // would mean paying CJ for orders nobody's actually confirmed as paid.
     } else if (paymentMethod === 'CARD') {
-      const forwardResult = await attemptCjForward({ orderId, shippingDetails, items: priced.items, shippingCarrier });
+      const forwardResult = await attemptCjForward({ orderId, shippingDetails, items, shippingCarrier });
       cjOrderStatus = forwardResult.cjOrderStatus;
       cjOrderId = forwardResult.cjOrderId;
       cjError = forwardResult.cjError;
@@ -269,25 +205,22 @@ export const handler = async (event) => {
     await orderRef.set({
       orderNumber: orderId,
       userId, // null for guest orders; lets signed-in customers see their order history
+      items,
       shippingDetails,
-      paymentMethod, // 'BANK_TRANSFER'
+      paymentMethod, // 'COD' | 'CARD' | 'BANK_TRANSFER'
       paymentStatus, // 'confirmed' | 'pending_verification' | 'rejected'
       hasReceipt, // the image itself lives in orderReceipts/{orderId}
-      paymentReference: paymentReference ? String(paymentReference).trim().slice(0, 120) : null,
-      paidAmount: paymentMethod === 'BANK_TRANSFER' ? Number(paidAmount) : null,
       shippingCarrier: shippingCarrier || null, // kept so review-payment.js can forward to CJ later using the same quoted carrier
-      items: priced.items,
-      subtotal: priced.subtotal,
-      shippingCost: requestedShipping,
-      grandTotal: verifiedGrandTotal,
+      subtotal,
+      shippingCost,
+      grandTotal,
       grandTotalLkr: grandTotalLkr || null, // LKR amount shown at checkout — what a bank transfer should match
       lkrRate: lkrRate || null,
       status: 'placed',
       cjOrderStatus, // 'not_applicable' | 'created' | 'failed' | 'skipped_no_cj_items' | 'skipped_no_live_quote'
       cjOrderId,
       cjError,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp()
+      createdAt: FieldValue.serverTimestamp()
     });
 
     return {

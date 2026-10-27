@@ -1,19 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
-import { 
-  Sparkles, Zap, Truck, 
-  ShoppingCart, Star, Plus, Minus, Trash2, X, Search, 
-  ShoppingBag, CreditCard, CheckCircle2,
-  User, Package, Clock, Flame, Tag, Gift, Award, MapPin, Banknote, Edit3, ChevronRight
-} from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { Truck, Plus, Minus, Trash2, X, ShoppingBag, CreditCard, CheckCircle2, Package, MapPin, Banknote, Edit3, ChevronRight } from 'lucide-react';
 
 // Page Components
 import AccountPage from './AccountPage';
-import GuestTrackPage from './GuestTrackPage';
 import AboutUs from './AboutUs';
 import AuthPage from './AuthPage';
 import AdminImporter from "./pages/AdminImporter";
 import ProductPage from './ProductPage';
+import Header from './components/Header';
+import HomePage from './components/HomePage';
+import SiteFooter from './components/SiteFooter';
 
 // Firestore
 import { db, auth } from './firebase';
@@ -21,175 +18,12 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { getUsdToLkrRate, formatLKR } from './utils/currency';
 
-// --- DATA ---
-
-const BANNER_DATA = [
-  {
-    id: 1,
-    tag: "Tech Week",
-    tagClass: "border-cyan-500/50 bg-cyan-500/10 text-cyan-400",
-    titleTop: "Level Up Your",
-    highlight: "Workspace",
-    highlightClass: "from-cyan-400 to-fuchsia-500",
-    desc: "Up to 55% off on premium peripherals and accessories.",
-    btnText: "Shop Now",
-    btnClass: "bg-fuchsia-600 hover:bg-fuchsia-500 shadow-[0_0_20px_rgba(192,38,211,0.4)]",
-    bgImg: "https://images.unsplash.com/photo-1593640408182-31c70c8268f5?w=1200&auto=format&fit=crop&q=80",
-    bgAccents: ["bg-cyan-500/10", "bg-fuchsia-500/10"]
-  },
-  {
-    id: 2,
-    tag: "Audio Deals",
-    tagClass: "border-purple-500/50 bg-purple-500/10 text-purple-400",
-    titleTop: "Immersive Sound",
-    highlight: "Experience",
-    highlightClass: "from-purple-400 to-pink-500",
-    desc: "Discover our new range of ANC wireless headphones.",
-    btnText: "Explore Now",
-    btnClass: "bg-purple-600 hover:bg-purple-500 shadow-[0_0_20px_rgba(147,51,234,0.4)]",
-    bgImg: "https://images.unsplash.com/photo-1618366712010-f4ae9c647dcb?w=1200&auto=format&fit=crop&q=80",
-    bgAccents: ["bg-purple-500/10", "bg-pink-500/10"]
-  },
-  {
-    id: 3,
-    tag: "Flash Sale",
-    tagClass: "border-emerald-500/50 bg-emerald-500/10 text-emerald-400",
-    titleTop: "Next-Gen",
-    highlight: "Smartwatches",
-    highlightClass: "from-emerald-400 to-cyan-500",
-    desc: "Track your fitness with precision. Limited time offer.",
-    btnText: "Grab Deal",
-    btnClass: "bg-emerald-600 hover:bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.4)]",
-    bgImg: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=1200&auto=format&fit=crop&q=80",
-    bgAccents: ["bg-emerald-500/10", "bg-cyan-500/10"]
-  }
-];
-
-const INITIAL_PRODUCTS = [
-  {
-    id: 1,
-    name: "AeroPulse Wireless Earbuds ANC Pro",
-    category: "Audio",
-    price: 34.99,
-    originalPrice: 69.99,
-    rating: 4.9,
-    reviewsCount: 328,
-    soldCount: "2.4k",
-    stockPercent: 82,
-    supplier: "TechHub Direct",
-    badge: "Choice Express",
-    isFlashSale: true,
-    description: "Active noise cancellation with 32-hour total battery life, low-latency gaming mode, and high-fidelity spatial audio drivers.",
-    image: "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=600&auto=format&fit=crop&q=80"
-  },
-  {
-    id: 2,
-    name: "Minimalist Smart Watch V2 AMOLED",
-    category: "Wearables",
-    price: 64.50,
-    originalPrice: 120.00,
-    rating: 4.8,
-    reviewsCount: 512,
-    soldCount: "4.1k",
-    stockPercent: 94,
-    supplier: "Apex Direct",
-    badge: "Top Seller",
-    isFlashSale: true,
-    description: "AMOLED edge-to-edge display featuring continuous heart rate metrics, GPS tracking, and 7-day battery endurance.",
-    image: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80"
-  },
-  {
-    id: 3,
-    name: "Cyberpunk RGB Mechanical Keyboard",
-    category: "Gaming",
-    price: 89.90,
-    originalPrice: 149.99,
-    rating: 5.0,
-    reviewsCount: 189,
-    soldCount: "890",
-    stockPercent: 65,
-    supplier: "DevLync Tech",
-    badge: "Choice Express",
-    isFlashSale: true,
-    description: "Custom hot-swappable linear switches, per-key RGB lighting effects, and an aircraft-grade aluminum alloy top frame.",
-    image: "https://images.unsplash.com/photo-1587829741301-dc798b83add3?w=600&auto=format&fit=crop&q=80"
-  },
-  {
-    id: 4,
-    name: "Precision Ergonomic Wireless Mouse",
-    category: "Gaming",
-    price: 24.99,
-    originalPrice: 45.00,
-    rating: 4.7,
-    reviewsCount: 94,
-    soldCount: "1.1k",
-    stockPercent: 40,
-    supplier: "Global Electronics",
-    badge: "Super Deal",
-    isFlashSale: false,
-    description: "Ultra-low latency dual-mode connection with thumb wheel controls, custom DPI presets, and internal macro profile memory.",
-    image: "https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=600&auto=format&fit=crop&q=80"
-  },
-  {
-    id: 5,
-    name: "Ultra-Fast 65W GaN Wall Charger",
-    category: "Accessories",
-    price: 18.50,
-    originalPrice: 35.00,
-    rating: 4.9,
-    reviewsCount: 420,
-    soldCount: "5.8k",
-    stockPercent: 91,
-    supplier: "Dexvee Official",
-    badge: "Choice Express",
-    isFlashSale: true,
-    description: "Triple-port fast charging for laptops, phones, and tablets with active temperature control technology.",
-    image: "https://images.unsplash.com/photo-1583863788434-e58a36330cf0?w=600&auto=format&fit=crop&q=80"
-  },
-  {
-    id: 6,
-    name: "Magnetic Desk Organizer Pad",
-    category: "Home",
-    price: 29.00,
-    originalPrice: 50.00,
-    rating: 4.6,
-    reviewsCount: 76,
-    soldCount: "630",
-    stockPercent: 55,
-    supplier: "StyleCraft",
-    badge: "Super Deal",
-    isFlashSale: false,
-    description: "Waterproof eco-leather desk mat with integrated magnetic cable anchors and embedded wireless phone charger.",
-    image: "https://images.unsplash.com/photo-1544816155-12df9643f363?w=600&auto=format&fit=crop&q=80"
-  }
-];
-
-const CATEGORY_BUBBLES = [
-  { id: "All", name: "All Offers", icon: Flame },
-  { id: "Audio", name: "Audio", icon: Zap },
-  { id: "Wearables", name: "Wearables", icon: Clock },
-  { id: "Gaming", name: "Gaming", icon: Award },
-  { id: "Accessories", name: "Accessories", icon: Tag },
-  { id: "Home", name: "Home", icon: Sparkles }
-];
-
-const MOCK_VOUCHERS = [
-  { id: "V1", type: "fixed", code: "DEXVEE5", minSpend: 30, discount: 5, collected: false },
-  { id: "V2", type: "percent", code: "FLASH15", minSpend: 60, discount: 15, collected: false }
-];
-
 export default function App() {
   // Navigation & Filtering States
-  const [selectedCategory, setSelectedCategory] = useState("All");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [sortBy, setSortBy] = useState("featured");
 
   // App States
-  const [currentBanner, setCurrentBanner] = useState(0);
-  const [products, setProducts] = useState(INITIAL_PRODUCTS);
+  const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(true);
-  const [vouchers, setVouchers] = useState(MOCK_VOUCHERS);
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   
@@ -197,7 +31,6 @@ export default function App() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [checkoutStep, setCheckoutStep] = useState(1);
   const [orderSuccess, setOrderSuccess] = useState(false);
-  const [placedOrderId, setPlacedOrderId] = useState('');
   const [isEditingAddress, setIsEditingAddress] = useState(true);
   
   const [toastMsg, setToastMsg] = useState("");
@@ -243,8 +76,6 @@ export default function App() {
   }, [user]);
   const [receiptFile, setReceiptFile] = useState(null); // { base64, previewUrl, name }
   const [receiptError, setReceiptError] = useState("");
-  const [paymentReference, setPaymentReference] = useState("");
-  const [paidAmount, setPaidAmount] = useState("");
 
   // Shrinks the chosen image to a small JPEG in the browser before it's sent,
   // so even a big phone photo ends up a few hundred KB.
@@ -294,13 +125,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentBanner((prev) => (prev + 1) % BANNER_DATA.length);
-    }, 5000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
     const fetchImportedProducts = async () => {
       try {
         const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
@@ -313,12 +137,12 @@ export default function App() {
             category: data.category || 'New Arrivals',
             price: data.sellingPrice ?? 0,
             originalPrice: data.originalPrice ?? null,
-            rating: data.rating ?? 5.0,
+            rating: data.rating ?? null,
             reviewsCount: data.reviewsCount ?? 0,
             soldCount: data.soldCount ?? 'New',
             stockPercent: data.stockPercent ?? 100,
             supplier: data.supplier || 'CJ Dropshipping',
-            badge: data.badge || 'Sample Checked',
+            badge: data.badge || null,
             isFlashSale: data.isFlashSale ?? false,
             description: data.description || 'Imported and ready to ship.',
             image: data.image || (Array.isArray(data.images) ? data.images[0] : '') || '',
@@ -328,7 +152,7 @@ export default function App() {
             vid: data.vid || null // CJ variant id — needed to get a real shipping quote
           };
         });
-        setProducts([...importedProducts, ...INITIAL_PRODUCTS]);
+        setProducts(importedProducts);
       } catch (err) {
         console.error('Failed to load products:', err);
       } finally {
@@ -351,11 +175,6 @@ export default function App() {
   const showToast = (text) => {
     setToastMsg(text);
     setTimeout(() => setToastMsg(""), 3000);
-  };
-
-  const collectVoucher = (id) => {
-    setVouchers(prev => prev.map(v => v.id === id ? { ...v, collected: true } : v));
-    showToast("Voucher collected!");
   };
 
   const addToCart = (product, quantity = 1) => {
@@ -402,10 +221,6 @@ export default function App() {
       setReceiptError("Please upload your payment receipt before placing the order.");
       return;
     }
-    if (paymentMethod === 'BANK_TRANSFER' && (!paymentReference.trim() || Number(paidAmount) <= 0)) {
-      setReceiptError("Please enter the paid amount and transaction reference.");
-      return;
-    }
 
     setPlacingOrder(true);
     try {
@@ -437,8 +252,6 @@ export default function App() {
           // actually offers, not a guess.
           shippingCarrier: shippingInfo?.isLiveQuote ? shippingInfo.carrier : null,
           receiptImageBase64: paymentMethod === 'BANK_TRANSFER' ? receiptFile?.base64 : undefined,
-          paymentReference: paymentMethod === 'BANK_TRANSFER' ? paymentReference.trim() : undefined,
-          paidAmount: paymentMethod === 'BANK_TRANSFER' ? Number(paidAmount) : undefined,
           idToken
         })
       });
@@ -451,7 +264,6 @@ export default function App() {
       }
 
       setPlacingOrder(false);
-      setPlacedOrderId(data.orderId || '');
       setOrderSuccess(true);
       setTimeout(() => {
         setOrderSuccess(false);
@@ -460,8 +272,6 @@ export default function App() {
         setCheckoutStep(1);
         setCart([]);
         setReceiptFile(null);
-        setPaymentReference("");
-        setPaidAmount("");
 
         if (data.paymentStatus === 'pending_verification') {
           showToast("Order placed! We'll verify your payment within 3 business days.");
@@ -554,25 +364,18 @@ export default function App() {
 
   const grandTotal = subtotal + shippingCost;
 
-  const filteredProducts = products
-    .filter((product) => {
-      const matchesCategory = selectedCategory === "All" || product.category === selectedCategory;
-      const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesCategory && matchesSearch;
-    })
-    .sort((a, b) => {
-      if (sortBy === "price-low") return a.price - b.price;
-      if (sortBy === "price-high") return b.price - a.price;
-      if (sortBy === "popular") return parseFloat(b.soldCount) - parseFloat(a.soldCount);
-      return 0;
+  // Categories come from the real products, so the menus always match the catalog.
+  const categories = useMemo(() => {
+    const map = new Map();
+    products.forEach((p) => {
+      const name = p.category || 'New Arrivals';
+      const entry = map.get(name) || { name, count: 0, image: p.image };
+      entry.count += 1;
+      if (!entry.image) entry.image = p.image;
+      map.set(name, entry);
     });
-
-  const flashSaleProducts = products.filter(p => p.isFlashSale).slice(0, 4);
-
-  // Live autocomplete suggestions for the search box, Daraz-style.
-  const searchSuggestions = searchQuery.trim()
-    ? products.filter((p) => p.name.toLowerCase().includes(searchQuery.trim().toLowerCase())).slice(0, 6)
-    : [];
+    return [...map.values()].sort((x, y) => y.count - x.count);
+  }, [products]);
 
   return (
     <Router>
@@ -580,252 +383,34 @@ export default function App() {
 
         {/* Toast Notification */}
         {toastMsg && (
-          <div className="fixed bottom-6 right-6 z-50 px-5 py-3 bg-white text-gray-800 rounded-2xl shadow-lg border border-gray-100 flex items-center gap-3">
+          <div className="fixed bottom-24 md:bottom-6 right-4 md:right-6 z-[60] px-5 py-3 bg-white text-gray-800 rounded-2xl shadow-lg border border-gray-100 flex items-center gap-3">
             <CheckCircle2 className="w-5 h-5 text-emerald-500" />
             <span className="text-sm font-medium">{toastMsg}</span>
           </div>
         )}
 
-        {/* Top Minimalist Bar - Deep Dark */}
-        <div className="bg-[#0D0717] text-[11px] py-2 px-6 border-b border-white/5">
-          <div className="max-w-7xl mx-auto flex items-center justify-between text-gray-400">
-            <div className="flex items-center gap-4">
-              <span>Welcome to Dexvee</span>
-              <span className="hidden md:inline">|</span>
-              <span className="hidden md:inline text-cyan-400 font-medium">Free Shipping on Orders over {formatLKR(50, lkrRate)}</span>
-            </div>
-            <div className="flex items-center gap-4">
-              <Link to="/admin" className="hover:text-cyan-400 transition-colors">Sell on Dexvee</Link>
-              <Link to="/track" className="hover:text-cyan-400 transition-colors">Track Order</Link>
-            </div>
-          </div>
-        </div>
-
-        {/* Main Solid Brand Header - Dark Purple */}
-        <header className="bg-[#1A0F2E] sticky top-0 z-40 shadow-lg border-b border-fuchsia-500/10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-6">
-            
-            {/* Brand Logo */}
-            <Link to="/" className="flex items-center shrink-0">
-               <img 
-                 src="/logo.png" 
-                 alt="Dexvee" 
-                 className="h-10 md:h-11 object-contain drop-shadow-lg" 
-               />
-            </Link>
-
-            {/* Search Box */}
-            <div className="flex-1 max-w-3xl hidden sm:flex items-center relative">
-              <div className="w-full flex items-center bg-white border border-gray-200 rounded-2xl overflow-hidden p-1.5 shadow-inner">
-                <input 
-                  type="text" 
-                  placeholder="Search in Dexvee..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onFocus={() => setShowSuggestions(true)}
-                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                  onKeyDown={(e) => { if (e.key === 'Escape' || e.key === 'Enter') setShowSuggestions(false); }}
-                  className="w-full bg-transparent px-5 py-2 text-sm outline-none text-gray-800 placeholder-gray-400"
-                />
-                <button className="px-8 py-2.5 bg-cyan-500 text-[#0D0717] font-black text-sm flex items-center gap-2 hover:bg-cyan-400 transition-colors rounded-xl shadow-[0_0_15px_rgba(34,211,238,0.3)]">
-                  <Search className="w-4 h-4" /> 
-                </button>
-              </div>
-
-              {/* Live suggestions dropdown */}
-              {showSuggestions && searchQuery.trim() && (
-                <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden z-50">
-                  {searchSuggestions.length > 0 ? (
-                    searchSuggestions.map((p) => (
-                      <Link
-                        key={p.id}
-                        to={`/product/${p.id}`}
-                        onClick={() => { setSearchQuery(p.name); setShowSuggestions(false); }}
-                        className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-b-0"
-                      >
-                        <img src={p.image} alt={p.name} className="w-10 h-10 object-cover rounded-lg shrink-0 bg-gray-50" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-gray-800 font-medium truncate">{p.name}</p>
-                          <p className="text-xs text-gray-400">{p.category}</p>
-                        </div>
-                        <span className="text-sm font-bold text-[#1A0F2E] shrink-0">{formatLKR(p.price, lkrRate)}</span>
-                      </Link>
-                    ))
-                  ) : (
-                    <div className="px-4 py-6 text-center text-sm text-gray-400">No products found for "{searchQuery}"</div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Header Actions */}
-            <div className="flex items-center gap-6 shrink-0 text-white">
-              <Link to={user ? "/account" : "/auth"} className="flex items-center gap-2 hover:text-cyan-400 transition-colors cursor-pointer bg-white/5 border border-white/5 px-4 py-2 rounded-2xl">
-                {user?.photoURL ? (
-                  <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="w-5 h-5 rounded-full object-cover" />
-                ) : (
-                  <User className="w-5 h-5" />
-                )}
-                <span className="text-sm font-medium hidden md:block">
-                  {user ? (user.displayName?.split(' ')[0] || 'My Account') : 'Sign In'}
-                </span>
-              </Link>
-
-              <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 hover:text-cyan-400 transition-colors bg-white/5 border border-white/5 px-4 py-2 rounded-2xl">
-                <ShoppingCart className="w-5 h-5" />
-                <span className="text-sm font-medium hidden md:block">Cart</span>
-                {totalItems > 0 && (
-                  <span className="absolute -top-2 -right-2 bg-fuchsia-500 text-white text-[10px] font-black w-6 h-6 rounded-full flex items-center justify-center shadow-[0_0_10px_rgba(217,70,239,0.5)]">
-                    {totalItems}
-                  </span>
-                )}
-              </button>
-            </div>
-          </div>
-        </header>
+        <Header
+          user={user}
+          totalItems={totalItems}
+          onOpenCart={() => setIsCartOpen(true)}
+          products={products}
+          categories={categories}
+          lkrRate={lkrRate}
+        />
 
         {/* Application Routing */}
         <Routes>
           <Route path="/" element={
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-24 space-y-10">
-              
-              {/* Split Hero Banner */}
-              <div className="flex flex-col lg:flex-row gap-4">
-                <div className="w-full lg:w-3/4 relative bg-[#0D0717] rounded-3xl overflow-hidden shadow-sm border border-white/10 min-h-[320px]">
-                  {BANNER_DATA.map((banner, index) => (
-                    <div
-                      key={banner.id}
-                      className={`absolute inset-0 w-full h-full flex items-center transition-opacity duration-1000 ease-in-out ${
-                        index === currentBanner ? "opacity-100 z-10" : "opacity-0 z-0"
-                      }`}
-                    >
-                      <div className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-30" style={{ backgroundImage: `url(${banner.bgImg})` }} />
-                      <div className="absolute inset-0 bg-gradient-to-r from-[#0D0717] via-[#0D0717]/80 to-transparent" />
-                      <div className={`absolute top-0 right-0 w-96 h-96 ${banner.bgAccents[0]} rounded-full blur-3xl -translate-y-1/2 translate-x-1/3`}></div>
-                      <div className={`absolute bottom-0 left-10 w-72 h-72 ${banner.bgAccents[1]} rounded-full blur-3xl translate-y-1/2`}></div>
-                      <div className="relative z-20 p-10 md:p-14 w-full md:w-2/3">
-                        <div className={`inline-block px-3 py-1 mb-4 border ${banner.tagClass} text-xs font-black tracking-widest uppercase rounded-full`}>{banner.tag}</div>
-                        <h1 className="text-4xl md:text-5xl font-black text-white leading-tight mb-4">
-                          {banner.titleTop} <br />
-                          <span className={`text-transparent bg-clip-text bg-gradient-to-r ${banner.highlightClass}`}>{banner.highlight}</span>
-                        </h1>
-                        <p className="text-gray-300 mb-8 font-medium">{banner.desc}</p>
-                        <button className={`${banner.btnClass} text-white px-8 py-3.5 rounded-2xl font-black uppercase tracking-wider transition-all`}>{banner.btnText}</button>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-black/20 px-3 py-1.5 rounded-full backdrop-blur-sm">
-                    {BANNER_DATA.map((_, index) => (
-                      <button key={index} onClick={() => setCurrentBanner(index)} className={`transition-all duration-300 rounded-full ${index === currentBanner ? "w-6 h-2 bg-white" : "w-2 h-2 bg-white/40 hover:bg-white/80"}`} />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="w-full lg:w-1/4 bg-[#1A0F2E] rounded-3xl p-6 shadow-sm border border-white/10 flex flex-col justify-center relative overflow-hidden">
-                  <div className="relative z-10 text-center">
-                    <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/10">
-                      <Gift className="w-6 h-6 text-fuchsia-400" />
-                    </div>
-                    <h3 className="text-white font-black text-lg mb-1">Claim Vouchers</h3>
-                    <p className="text-gray-400 text-xs font-medium mb-6">Exclusive savings inside</p>
-                    <div className="space-y-3">
-                      {vouchers.map(v => (
-                        <div key={v.id} className="bg-[#0D0717] border border-white/10 rounded-2xl p-4 flex items-center justify-between">
-                          <div className="text-left">
-                            <div className="text-cyan-400 font-black text-lg leading-none">{v.type === "percent" ? `${v.discount}% OFF` : `${formatLKR(v.discount, lkrRate)} OFF`}</div>
-                            <div className="text-gray-500 text-[10px] mt-1 uppercase tracking-wider">Min {formatLKR(v.minSpend, lkrRate)}</div>
-                          </div>
-                          <button onClick={() => collectVoucher(v.id)} disabled={v.collected} className={`text-xs font-bold px-4 py-2 rounded-xl transition-all ${v.collected ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-white text-[#0D0717] hover:bg-cyan-400 hover:shadow-[0_0_15px_rgba(34,211,238,0.4)]'}`}>
-                            {v.collected ? "Got It" : "Claim"}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Minimal Categories */}
-              <section className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
-                <h2 className="text-gray-800 text-lg mb-6 font-bold px-2">Shop by Category</h2>
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-4">
-                  {CATEGORY_BUBBLES.map((cat) => {
-                    const IconComp = cat.icon;
-                    const isSelected = selectedCategory === cat.id;
-                    return (
-                      <button key={cat.id} onClick={() => setSelectedCategory(cat.id)} className={`flex flex-col items-center justify-center gap-3 p-5 rounded-2xl transition-all ${isSelected ? 'bg-[#1A0F2E]/10 text-[#1A0F2E] border-2 border-[#1A0F2E]/20 shadow-sm' : 'hover:bg-gray-50 text-gray-600 border-2 border-transparent hover:border-gray-100'}`}>
-                        <IconComp className={`w-7 h-7 ${isSelected ? 'text-[#1A0F2E]' : 'text-gray-400'}`} />
-                        <span className="text-sm font-semibold">{cat.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-
-              {/* Flash Sale Banner */}
-              <section className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
-                <div className="flex items-center gap-3 mb-6 px-2">
-                  <h2 className="text-[#1A0F2E] text-2xl font-black">Flash Sale</h2>
-                  <span className="bg-[#1A0F2E] text-white text-xs px-3 py-1 rounded-xl font-bold uppercase tracking-widest shadow-sm">Live</span>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                  {flashSaleProducts.map((product) => (
-                    <Link key={product.id} to={`/product/${product.id}`} className="group cursor-pointer bg-gray-50 rounded-3xl p-3 hover:shadow-md transition-all border border-transparent hover:border-gray-200 block">
-                      <div className="aspect-square bg-white mb-4 overflow-hidden rounded-2xl relative">
-                        <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                        <div className="absolute top-3 right-3 bg-[#1A0F2E] text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow-lg">
-                          -{Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)}%
-                        </div>
-                      </div>
-                      <div className="px-2 pb-2">
-                        <div className="text-[#1A0F2E] text-xl font-black">{formatLKR(product.price, lkrRate)}</div>
-                        <div className="text-gray-400 text-sm line-through font-medium">{formatLKR(product.originalPrice, lkrRate)}</div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              </section>
-
-              {/* Just For You Grid */}
-              <section>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 px-2">
-                  <h2 className="text-2xl text-gray-800 font-black">Just For You</h2>
-                  <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="border border-gray-200 text-sm font-medium rounded-xl px-4 py-2.5 outline-none text-gray-600 bg-white hover:border-gray-300 transition-colors shadow-sm">
-                    <option value="featured">Best Match</option>
-                    <option value="price-low">Price Low to High</option>
-                    <option value="price-high">Price High to Low</option>
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6">
-                  {filteredProducts.map((product) => (
-                    <div key={product.id} className="group bg-white rounded-3xl border border-gray-100 hover:border-[#1A0F2E]/30 hover:shadow-xl transition-all duration-300 flex flex-col justify-between overflow-hidden">
-                      <Link to={`/product/${product.id}`} className="cursor-pointer block">
-                        <div className="aspect-square bg-gray-50 overflow-hidden relative">
-                          <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
-                        </div>
-                        <div className="p-5">
-                          <h3 className="text-sm font-semibold text-gray-800 line-clamp-2 leading-snug h-10 mb-2 group-hover:text-[#1A0F2E]">{product.name}</h3>
-                          <div className="text-[#1A0F2E] text-xl font-black mb-2">{formatLKR(product.price, lkrRate)}</div>
-                          <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium mb-2">
-                            <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
-                            <span>{product.rating}</span><span className="mx-1 opacity-50">•</span><span>{product.soldCount} Sold</span>
-                          </div>
-                        </div>
-                      </Link>
-                      <div className="px-5 pb-5">
-                        <button onClick={() => addToCart(product)} className="w-full py-2.5 border-2 border-[#1A0F2E] text-[#1A0F2E] hover:bg-[#1A0F2E] hover:text-white rounded-xl text-xs font-black transition-colors uppercase tracking-wider">
-                          Add to Cart
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </main>
+            <HomePage
+              products={products}
+              productsLoading={productsLoading}
+              categories={categories}
+              lkrRate={lkrRate}
+              user={user}
+              onAddToCart={addToCart}
+            />
           } />
-
-          <Route path="/product/:id" element={<ProductPage products={products} lkrRate={lkrRate} onAddToCart={addToCart} onBuyNow={handleBuyNow} />} />
-          <Route path="/track" element={<GuestTrackPage />} />
+          <Route path="/product/:id" element={<ProductPage products={products} productsLoading={productsLoading} lkrRate={lkrRate} onAddToCart={addToCart} onBuyNow={handleBuyNow} />} />
           <Route path="/about" element={<AboutUs />} />
           <Route path="/auth" element={<AuthPage user={user} authReady={authReady} onProfileUpdated={bumpUser} />} />
           <Route path="/account" element={<AccountPage darkMode={darkMode} user={user} authReady={authReady} lkrRate={lkrRate} onProfileUpdated={bumpUser} />} />
@@ -906,8 +491,7 @@ export default function App() {
                     <CheckCircle2 className="w-12 h-12 text-emerald-500" />
                   </div>
                   <h3 className="text-3xl font-black text-[#1A0F2E] mb-2">Order Confirmed!</h3>
-                  <p className="text-gray-500 font-medium">Thank you! Your order ID is <span className="font-black text-gray-900">{placedOrderId}</span>.</p>
-                  <p className="text-sm text-gray-500 mt-2">Save this ID to track your order later.</p>
+                  <p className="text-gray-500 font-medium">Thank you! Your items will be shipped soon.</p>
                 </div>
               </div>
             ) : (
@@ -1076,10 +660,12 @@ export default function App() {
                           <div className="p-5 bg-gray-50 border-2 border-gray-100 rounded-2xl space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
                             <div>
                               <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Transfer to this account</p>
-                                <p className="text-sm mb-3"><span className="text-gray-500">Amount to transfer:</span> <span className="font-black text-gray-900">{formatLKR(grandTotal, lkrRate)}</span></p>
-                                <div className="bg-white border border-gray-200 rounded-xl p-4 text-sm space-y-1">
-                                <p className="text-amber-700 font-bold">Payment account details will be provided by Dexvee before transfer.</p>
-                                <p className="text-xs text-gray-500">Do not send money until the account details are confirmed by Dexvee support.</p>
+                              <p className="text-sm mb-3"><span className="text-gray-500">Amount to transfer:</span> <span className="font-black text-gray-900">{formatLKR(grandTotal, lkrRate)}</span></p>
+                              <div className="bg-white border border-gray-200 rounded-xl p-4 text-sm space-y-1">
+                                <p><span className="text-gray-400">Bank:</span> <span className="font-bold text-gray-800">[Your Bank Name]</span></p>
+                                <p><span className="text-gray-400">Account Name:</span> <span className="font-bold text-gray-800">[Your Account Name]</span></p>
+                                <p><span className="text-gray-400">Account Number:</span> <span className="font-bold text-gray-800">[Your Account Number]</span></p>
+                                <p><span className="text-gray-400">Branch:</span> <span className="font-bold text-gray-800">[Your Branch]</span></p>
                               </div>
                             </div>
 
@@ -1101,10 +687,6 @@ export default function App() {
                                   Remove and choose a different photo
                                 </button>
                               )}
-                              <div className="grid gap-3 sm:grid-cols-2 mt-4">
-                                <input type="number" min="1" step="0.01" value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} placeholder="Amount paid (LKR)" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-fuchsia-400" />
-                                <input type="text" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} placeholder="Transaction reference" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:border-fuchsia-400" />
-                              </div>
                               {receiptError && <p className="text-xs text-red-500 font-bold mt-2">{receiptError}</p>}
                             </div>
 
@@ -1227,15 +809,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Minimalist Footer */}
-        <footer className="bg-white border-t border-gray-200 mt-16 py-10 text-center">
-          <div className="flex justify-center gap-6 mb-4 text-xs font-semibold text-gray-500">
-            <Link to="/about" className="hover:text-cyan-600 transition-colors">About Us</Link>
-            <span>•</span>
-            <Link to="/track" className="hover:text-cyan-600 transition-colors">Track Order</Link>
-          </div>
-          <p className="text-sm font-medium text-gray-400">© 2026 Dexvee Express. All rights reserved.</p>
-        </footer>
+        <SiteFooter categories={categories} />
 
       </div>
     </Router>

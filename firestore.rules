@@ -1,0 +1,25 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // The catalog is public to read; only server functions can change it.
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // A signed-in customer can read ONLY their own orders. Nobody can write
+    // from the browser — orders are created by the place-order function.
+    // (Orders also hold names, phones and addresses, so there is no wider read.)
+    match /orders/{orderId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Everything else (including orderReceipts and settings) stays closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
