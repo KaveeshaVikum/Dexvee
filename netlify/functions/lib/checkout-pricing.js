@@ -145,7 +145,7 @@ export async function quoteShipping(items) {
   const nonCjQuantity = items.filter((item) => !item.vid).reduce((sum, item) => sum + item.quantity, 0);
   if (!cjItems.length) return fallbackQuote(items, 'No cart items have a CJ variant ID; estimated shipping is used.');
 
-  const apiKey = process.env.VITE_CJ_API_TOKEN || process.env.CJ_API_TOKEN;
+  const apiKey = process.env.CJ_API_TOKEN;
   if (!apiKey) return fallbackQuote(items, 'CJ shipping is temporarily unavailable; estimated shipping is used.');
 
   try {

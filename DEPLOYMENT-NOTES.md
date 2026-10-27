@@ -1,28 +1,36 @@
 # Dexvee deployment notes
 
-## Required Netlify function configuration
+## Netlify function environment
 
-Set these variables in Netlify under **Site configuration → Environment variables**, with the **Functions** scope enabled. Do not place service-account values or provider API keys in committed source files.
+Set these in Netlify under **Site configuration → Environment variables**, with the **Functions** scope enabled. Keep service-account values and supplier API tokens private; never configure them with a `VITE_` prefix.
 
-| Variable | Value / purpose |
+| Variable | Purpose |
 |---|---|
-| `ADMIN_EMAILS` | `dexveeshop@gmail.com` (comma-separated allowlist). Admin access fails closed when this is blank. |
+| `ADMIN_EMAILS` | Comma-separated allowlist of verified Firebase admin email addresses. Access fails closed when blank. |
 | `FIREBASE_PROJECT_ID` | Firebase project ID used by the server functions. |
-| `FIREBASE_CLIENT_EMAIL` | Service-account client email for Firebase Admin. |
-| `FIREBASE_PRIVATE_KEY` | Service-account private key. Store as a Netlify secret; escaped `\n` sequences are supported. |
-| `CJ_API_TOKEN` | Optional server-side CJ Dropshipping token for live shipping quotes. If unavailable, checkout uses the stated estimated shipping fallback. |
+| `FIREBASE_CLIENT_EMAIL` | Firebase Admin service-account client email. |
+| `FIREBASE_PRIVATE_KEY` | Firebase Admin service-account private key. Store as a secret; escaped `\\n` sequences are supported. |
+| `CJ_API_TOKEN` | Private CJ Dropshipping token used by server functions. Live shipping quotes fall back to estimated shipping when this is unset. |
 
-After changing the environment, trigger a fresh Netlify deploy so the Functions receive it. Never expose the Firebase service-account key or CJ token as a `VITE_` client variable.
+The configured admin address is also deliberately shown as the customer-support address on the public site. Netlify's scanner therefore reports the `ADMIN_EMAILS` value as a match in public source/docs; it is not a credential. To allow this intentional duplicate without disabling scanning for other keys, add this Netlify environment variable:
+
+```text
+SECRETS_SCAN_OMIT_KEYS=ADMIN_EMAILS
+```
+
+Do not disable the entire secrets scanner. Keep the actual `ADMIN_EMAILS` allowlist configured, and redeploy after changing the environment. Remove any generated patch files (for example, `Dexvee-improvements.patch`) from the production repository; they are local handoff artifacts, not application files.
+
+The deploy log showed `VITE_CJ_API_TOKEN` set. Remove that variable from Netlify. The server functions now read only `CJ_API_TOKEN`. The repository's frontend does not reference `VITE_CJ_API_TOKEN`, but any `VITE_` variable should be treated as potentially browser-visible; rotate the CJ token if it was ever included in a client bundle or otherwise exposed.
 
 ## Firebase checks
 
-1. Ensure `dexveeshop@gmail.com` is an account in the same Firebase Authentication project and its email is verified. The admin dashboard supports Firebase email/password and Google sign-in; the server checks the verified email against `ADMIN_EMAILS`.
+1. Ensure each `ADMIN_EMAILS` entry is a verified account in the same Firebase Authentication project. The admin dashboard supports Firebase email/password and Google sign-in; the server checks the verified email against the allowlist.
 2. Publish the updated root `firestore.rules`. Products remain public-read/server-write, orders are readable only by their owner, and product reviews are public-read/server-write.
 3. Confirm the Firebase Admin service account has the Firestore permissions required by the Netlify functions.
 
 ## Store information required before taking real payments
 
-The customer support email is configured as `dexveeshop@gmail.com`. Phone, WhatsApp, and social channels remain blank until supplied.
+The store support email is configured in `src/data/siteContent.js`. Phone, WhatsApp, and social channels remain blank until supplied.
 
 The real bank account details are **not yet configured**. In `src/data/siteContent.js`, set `bankName`, `bankAccountName`, `bankAccountNumber`, and `bankBranch` to the exact details customers should use. Until all four values are supplied, checkout intentionally blocks order placement and tells customers not to transfer money. Do not replace those blanks with sample values.
 

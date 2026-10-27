@@ -111,7 +111,7 @@ export const handler = async (event) => {
 
     const productId = extractCjProductId(rawInput);
 
-    const apiKey = process.env.VITE_CJ_API_TOKEN || process.env.CJ_API_TOKEN;
+    const apiKey = process.env.CJ_API_TOKEN;
     if (!apiKey) {
       throw new Error("CJ API Key is missing in Netlify Environment Variables!");
     }

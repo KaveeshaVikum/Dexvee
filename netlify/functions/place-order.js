@@ -103,7 +103,7 @@ export async function attemptCjForward({ orderId, shippingDetails, items, shippi
     return { cjOrderStatus: 'skipped_no_live_quote', cjOrderId: null, cjError: 'No confirmed live CJ shipping quote was available — order needs manual fulfillment.' };
   }
 
-  const apiKey = process.env.VITE_CJ_API_TOKEN || process.env.CJ_API_TOKEN;
+  const apiKey = process.env.CJ_API_TOKEN;
   if (!apiKey) return { cjOrderStatus: 'failed', cjOrderId: null, cjError: 'CJ API key is missing in Netlify Environment Variables.' };
 
   try {
